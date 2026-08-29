@@ -20,5 +20,6 @@ This folder owns orchestration, run identity, run history, and smoke tests.
 - Keep only a handful of high-level smoke tests under `tests/`.
 - Use one file per smoke test.
 - Each smoke test defines an explicit input and passes it directly to `run`.
+- Keep `runner/__init__.py` and `runner/tests/__init__.py` so copied modules with the same test filenames retain distinct import paths during discovery.
 - Tests use saved adapter data by default. `--FRESH` performs real adapter calls and updates saved data.
 - Do not add a large unit-test hierarchy unless the user explicitly requests it.

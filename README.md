@@ -18,4 +18,10 @@ modules/<module_name>/
 - Export only `run` from the module's top-level `__init__.py`.
 - Keep recent adapter results under `input/data/` and recent runs under `runner/runs/`.
 
-The top-level module `__init__.py` is intentional because it defines the public API. The other folders use modern Python namespace-package behavior and do not need package-marker files.
+`modules/__init__.py` enables repository-wide standard-library test discovery. Each module's top-level file defines its public API, while the two under `runner/` and `runner/tests/` give copied smoke tests distinct import paths. `input/`, `adapters/`, and `src/` do not need package-marker files.
+
+Run all placeholder smoke tests with:
+
+```sh
+python3 -m unittest discover -s modules -t . -v
+```
