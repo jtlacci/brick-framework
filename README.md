@@ -70,7 +70,7 @@ export default {
 };
 ```
 
-The inner module keeps its own run record. The outer adapter snapshot stores the returned data, so both sides remain visible. Propagating `context.mode` means a fresh outer run is fresh end-to-end; use that mode deliberately because it can fan out to several real sources. The boundary checker permits imports of another module's `index.js` but rejects reaching into its `src/`, `input/`, or `runner/` folders.
+During a fresh run, the inner module keeps its own run record and the outer adapter snapshot stores the returned data, so both sides remain visible. A later outer replay stops at that saved adapter response; it does not invoke the child module again. Propagating `context.mode` means a fresh outer run is fresh end-to-end, so use it deliberately because it can fan out to several real sources. The boundary checker permits imports of another module's `index.js` but rejects reaching into its `src/`, `input/`, or `runner/` folders.
 
 ## Commands
 
