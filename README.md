@@ -52,20 +52,25 @@ An adapter owns one external boundary: an HTTP API, database, filesystem, clock,
 - `replay` is the default. It reads `input/data/<source>/samples/<key>.json`. A missing sample is an error with instructions to run fresh. It never falls through to the live source.
 - `fresh` calls the adapter. The response or error is written under `calls/` with the run ID and call ID. A successful response also replaces the stable sample for that key.
 
-Samples are current fixtures, not history, so they are not pruned. Fresh-call files and run files are histories and are capped by `retention.adapterCalls` and `retention.runs` in `config.yml`. These JSON artifacts are deliberately tracked by Git. The framework writes them but does not run Git commands for you.
+Samples are current fixtures, not history, so they are not pruned. Fresh-call files and run files are histories and are capped by `retention.adapterCalls` and `retention.runs` in `config.yml`. Test and manual runs share the same run cap, so frequent smoke tests can evict older manual runs. These JSON artifacts are deliberately tracked by Git. The framework writes them but does not run Git commands for you. Commit a fresh run's updated samples, adapter calls, and run records together so the run record explains why a fixture changed.
 
 ### Module-to-module calls
 
 An adapter may import another module's public `run()` function. Call it with the outer run ID as `parentRunId`:
 
 ```js
-const response = await otherModuleRun(args, {
-  mode,
-  parentRunId: runId,
-});
+export default {
+  name: "other-module",
+  async fetch(args, context) {
+    return otherModuleRun(args, {
+      mode: context.mode,
+      parentRunId: context.runId,
+    });
+  },
+};
 ```
 
-The inner module keeps its own run record. The outer adapter snapshot stores the returned data, so both sides remain visible.
+The inner module keeps its own run record. The outer adapter snapshot stores the returned data, so both sides remain visible. Propagating `context.mode` means a fresh outer run is fresh end-to-end; use that mode deliberately because it can fan out to several real sources. The boundary checker permits imports of another module's `index.js` but rejects reaching into its `src/`, `input/`, or `runner/` folders.
 
 ## Commands
 

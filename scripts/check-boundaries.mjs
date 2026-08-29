@@ -92,6 +92,21 @@ for (const moduleName of await moduleNames()) {
     }
   }
 
+  for (const file of (await walk(moduleDirectory)).filter((item) => item.endsWith(".js"))) {
+    const source = await readFile(file, "utf8");
+    for (const specifier of importsIn(source).filter((item) => item.startsWith("."))) {
+      const target = path.resolve(path.dirname(file), specifier);
+      const relativeTarget = path.relative(modulesRoot, target);
+      if (relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) continue;
+      const [targetModule] = relativeTarget.split(path.sep);
+      if (targetModule === moduleName) continue;
+      const targetPublicEntry = path.join(modulesRoot, targetModule, "index.js");
+      if (target !== targetPublicEntry) {
+        errors.push(`${path.relative(modulesRoot, file)}: cross-module imports must target ${targetModule}/index.js`);
+      }
+    }
+  }
+
   const publicEntry = (await readFile(path.join(moduleDirectory, "index.js"), "utf8")).trim();
   if (publicEntry !== 'export { run } from "./runner/run.js";') {
     errors.push(`${moduleName}/index.js: public entry must export only run() from runner/run.js`);
