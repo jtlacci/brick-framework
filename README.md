@@ -14,7 +14,7 @@ bricks/<brick_name>/
 ```
 
 - Add one file under `input/adapters/` for every external source and sibling brick.
-- Keep external calls out of `src/`.
+- `src/` reaches external sources and sibling bricks only through its own `input/` adapters.
 - Expose only `run` to sibling bricks through the brick's top-level `__init__.py`.
 - Keep recent adapter results under `input/data/` and recent runs under `runner/runs/`.
 

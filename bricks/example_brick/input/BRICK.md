@@ -15,10 +15,12 @@ This folder owns every external-source boundary and sibling-brick boundary for t
 - Other bricks in this repository are sibling bricks, not external sources.
 - An adapter fetches or sends data; it does not contain domain logic.
 - A sibling adapter must call the sibling brick's `run` entry point.
+- Adapters are called by `src/` with a plain run context containing the owning run ID, mode, and resolved adapter configuration.
+- Adapters never import or call `src/` or `runner/`.
 
 ## Saved data
 
-- Store adapter results under `data/` with the owning run ID.
+- Store raw adapter results under `data/` with the owning run ID.
 - A saved result should identify the adapter, request, response or error, and capture time.
 - Default smoke runs use saved data. If a test pins a saved run ID, use it; otherwise use the latest matching saved result.
 - `--FRESH` means call the real adapter and save the new result. Never silently fall back to a real call.
