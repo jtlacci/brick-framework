@@ -39,6 +39,13 @@ for (const moduleName of names) {
     const testName = path.basename(testFile, ".json");
     const before = mode === "replay" ? await replaySideEffectState(moduleName) : undefined;
     const { runId } = await run(input, { mode, testName });
+    const runRecord = await readJson(path.join(moduleDirectory, "runner", "runs", `${runId}.json`));
+    const callNumbers = runRecord.adapterCalls.map(({ callId }) => Number.parseInt(callId, 10));
+    const expectedCallNumbers = callNumbers.map((_, index) => index + 1);
+    if (new Set(runRecord.adapterCalls.map(({ callId }) => callId)).size !== runRecord.adapterCalls.length
+        || JSON.stringify(callNumbers) !== JSON.stringify(expectedCallNumbers)) {
+      throw new Error(`${moduleName}/${testName} adapter call IDs are duplicated or out of invocation order`);
+    }
     const after = mode === "replay" ? await replaySideEffectState(moduleName) : undefined;
     if (before !== after) {
       throw new Error(`${moduleName}/${testName} replay caused an adapter call or entered another module`);
