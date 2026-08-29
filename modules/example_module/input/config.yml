@@ -1,7 +1,0 @@
-module: example_module
-
-retention:
-  runs: 10
-  adapter_calls: 10
-
-# Add module-specific configuration below.

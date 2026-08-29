@@ -1,10 +1,10 @@
 # Input contract
 
-This folder owns every external-source boundary and sibling-module boundary for the module.
+This folder owns every external-source boundary and sibling-brick boundary for the brick.
 
 ## Configuration
 
-- Keep module configuration in `config.yml`.
+- Keep brick configuration in `config.yml`.
 - Keep run and adapter-call retention limits in that file.
 - Never store credentials or secrets in committed configuration or saved data.
 
@@ -12,9 +12,9 @@ This folder owns every external-source boundary and sibling-module boundary for 
 
 - Create one Python file under `adapters/` for each external source.
 - APIs, databases, filesystems, queues, clocks, and services are external sources beyond the repository boundary.
-- Other modules in this repository are sibling modules, not external sources.
+- Other bricks in this repository are sibling bricks, not external sources.
 - An adapter fetches or sends data; it does not contain domain logic.
-- A sibling adapter must call the sibling module's `run` entry point.
+- A sibling adapter must call the sibling brick's `run` entry point.
 
 ## Saved data
 
