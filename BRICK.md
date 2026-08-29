@@ -27,4 +27,4 @@ This repository uses Python file boilerplate to organize one codebase as discret
 
 ## Contract precedence
 
-This file applies to the whole repository. A nested `brick.md` adds rules for its folder and descendants; it may not relax a parent rule.
+This file applies to the whole repository. A nested `BRICK.md` adds rules for its folder and descendants; it may not relax a parent rule.

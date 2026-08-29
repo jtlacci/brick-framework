@@ -9,7 +9,7 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 ```text
 <brick_name>/
 ├── __init__.py
-├── brick.md
+├── BRICK.md
 ├── input/
 ├── runner/
 └── src/

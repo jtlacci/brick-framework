@@ -7,7 +7,7 @@ Define every domain as a named folder under `bricks/`. `example_brick` is an emp
 ```text
 bricks/<brick_name>/
 ├── __init__.py           # exposes only the internal run entry point
-├── brick.md             # brick contract
+├── BRICK.md             # brick contract
 ├── input/                # config, adapters, saved data, input contract
 ├── runner/               # run entry point, IDs, history, tests, runner contract
 └── src/                  # private logic and source contract
