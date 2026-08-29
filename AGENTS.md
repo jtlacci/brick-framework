@@ -1,6 +1,13 @@
 # Repository contract
 
-This repository is Python file boilerplate for codebases built as discrete domain modules.
+This repository uses Python file boilerplate to organize one codebase as discrete domain modules.
+
+## Terminology
+
+- The **repository boundary** separates this repository from APIs, databases, files, services, and other outside systems. Only these are called external.
+- A **module boundary** separates one module from its sibling modules inside this repository.
+- A **module entry point** is `run`. It is repository-internal and is called by sibling-module adapters.
+- A **sibling adapter** is an adapter whose target is another module's `run` entry point.
 
 ## Purpose
 
@@ -12,8 +19,9 @@ This repository is Python file boilerplate for codebases built as discrete domai
 
 - Put every domain module in its own named folder under `modules/`.
 - Every module has `input/`, `runner/`, and `src/`.
-- A module exposes only its `run` function publicly.
-- All external access, including access to another module, crosses an adapter boundary.
+- A module exposes only its `run` entry point to sibling modules.
+- External access crosses an external-source adapter; sibling-module access crosses a sibling adapter.
+- Modules are used only inside this repository. Do not package or expose them for outside consumers.
 - Saved adapter results and run records are local, bounded by configuration, and tracked in Git.
 - Keep only a small number of high-level smoke tests.
 

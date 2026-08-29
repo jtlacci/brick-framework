@@ -1,6 +1,6 @@
 # Input contract
 
-This folder owns every external boundary for the module.
+This folder owns every external-source boundary and sibling-module boundary for the module.
 
 ## Configuration
 
@@ -11,9 +11,10 @@ This folder owns every external boundary for the module.
 ## Adapters
 
 - Create one Python file under `adapters/` for each external source.
-- APIs, databases, filesystems, queues, clocks, services, and other modules are external sources.
+- APIs, databases, filesystems, queues, clocks, and services are external sources beyond the repository boundary.
+- Other modules in this repository are sibling modules, not external sources.
 - An adapter fetches or sends data; it does not contain domain logic.
-- Calls to another module must use that module's public `run` function.
+- A sibling adapter must call the sibling module's `run` entry point.
 
 ## Saved data
 

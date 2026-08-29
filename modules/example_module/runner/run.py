@@ -1,4 +1,4 @@
-"""The module's only public entry point."""
+"""The module's repository-internal entry point."""
 
 
 def run(inputs: dict) -> dict:

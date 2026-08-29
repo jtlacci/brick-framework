@@ -7,4 +7,4 @@ This folder owns the module's private domain logic. Its internal organization is
 - Receive configuration and external data as ordinary function arguments from `runner/`.
 - Libraries are allowed only when their use is local and does not make external calls.
 - Keep behavior deterministic for the same supplied inputs unless randomness is explicitly passed in.
-- Export functions only for use by this module's `runner/`; the module-level public API remains `run` alone.
+- Export functions only for use by this module's `runner/`; the repository-internal module entry point remains `run` alone.

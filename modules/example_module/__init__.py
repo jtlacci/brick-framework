@@ -1,4 +1,4 @@
-"""Replace this package name with the domain module name."""
+"""Repository-internal entry point for this domain module."""
 
 from .runner.run import run
 
