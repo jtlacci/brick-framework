@@ -23,3 +23,17 @@ export async function jsonFiles(directory) {
 export async function readJson(file) {
   return JSON.parse(await readFile(file, "utf8"));
 }
+
+export async function allFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const files = [];
+  for (const entry of entries) {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await allFiles(target));
+    else files.push(target);
+  }
+  return files.sort();
+}

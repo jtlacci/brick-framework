@@ -1,0 +1,17 @@
+{
+  "source": "identity",
+  "key": "88bab6d8f6dc68a877064d58",
+  "runId": "20260829221042992-90d75cb6",
+  "callId": "1-86e80d52",
+  "capturedAt": "2026-08-29T22:10:43.042Z",
+  "args": {
+    "name": "Ada"
+  },
+  "ok": true,
+  "value": {
+    "runId": "20260829221043042-655c0936",
+    "result": {
+      "name": "Ada"
+    }
+  }
+}

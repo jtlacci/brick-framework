@@ -14,6 +14,7 @@ export async function createAdapters({ moduleDirectory, config, runId, mode, par
   const adaptersDirectory = path.join(moduleDirectory, "input", "adapters");
   const entries = await readdir(adaptersDirectory, { withFileTypes: true });
   const adapters = {};
+  let nextCallNumber = 1;
 
   for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith(".js")).sort((a, b) => a.name.localeCompare(b.name))) {
     const adapter = (await import(pathToFileURL(path.join(adaptersDirectory, entry.name)))).default;
@@ -23,8 +24,10 @@ export async function createAdapters({ moduleDirectory, config, runId, mode, par
     if (adapters[adapter.name]) throw new Error(`Duplicate adapter name '${adapter.name}'`);
 
     adapters[adapter.name] = async (args = {}) => {
+      const callNumber = nextCallNumber;
+      nextCallNumber += 1;
       const key = safeKey(adapter.key ? await adapter.key(args) : hash(args).slice(0, 24));
-      const callId = `${adapterCalls.length + 1}-${hash({ runId, args, key }).slice(0, 8)}`;
+      const callId = `${callNumber}-${hash({ runId, args, key }).slice(0, 8)}`;
       const dataDirectory = path.join(moduleDirectory, "input", "data", safeKey(adapter.name));
       const sampleFile = path.join(dataDirectory, "samples", `${key}.json`);
 

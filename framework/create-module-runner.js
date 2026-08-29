@@ -11,6 +11,10 @@ function serializeError(error) {
   };
 }
 
+function sortAdapterCalls(adapterCalls) {
+  adapterCalls.sort((left, right) => Number.parseInt(left.callId, 10) - Number.parseInt(right.callId, 10));
+}
+
 export function createModuleRunner({ moduleDirectory: directoryUrl, execute, createAdapters, createRunId }) {
   const moduleDirectory = fileURLToPath(directoryUrl);
 
@@ -44,6 +48,7 @@ export function createModuleRunner({ moduleDirectory: directoryUrl, execute, cre
         moduleDirectory, config, runId, mode, parentRunId: options.parentRunId, adapterCalls,
       });
       const result = await execute({ input, config, adapters, runId });
+      sortAdapterCalls(adapterCalls);
       const finishedAt = new Date().toISOString();
       await writeJson(runFile, {
         ...baseRecord,
@@ -55,6 +60,7 @@ export function createModuleRunner({ moduleDirectory: directoryUrl, execute, cre
       await pruneJsonFiles(path.dirname(runFile), config.retention.runs, "startedAt");
       return { runId, result };
     } catch (error) {
+      sortAdapterCalls(adapterCalls);
       const finishedAt = new Date().toISOString();
       await writeJson(runFile, {
         ...baseRecord,

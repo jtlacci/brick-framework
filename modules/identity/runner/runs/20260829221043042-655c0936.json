@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260829221043042-655c0936",
+  "module": "identity",
+  "mode": "fresh",
+  "kind": "run",
+  "parentRunId": "20260829221042992-90d75cb6",
+  "startedAt": "2026-08-29T22:10:43.042Z",
+  "input": {
+    "name": "Ada"
+  },
+  "adapterCalls": [],
+  "finishedAt": "2026-08-29T22:10:43.047Z",
+  "durationMs": 4.474,
+  "ok": true,
+  "result": {
+    "name": "Ada"
+  }
+}

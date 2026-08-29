@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260829221107774-a83a25d5",
+  "module": "greeting",
+  "mode": "replay",
+  "kind": "test",
+  "testName": "basic",
+  "startedAt": "2026-08-29T22:11:07.777Z",
+  "input": {
+    "name": "Ada"
+  },
+  "adapterCalls": [
+    {
+      "callId": "1-6d5309bb",
+      "source": "identity",
+      "key": "88bab6d8f6dc68a877064d58",
+      "mode": "replay",
+      "sample": "input/data/identity/samples/88bab6d8f6dc68a877064d58.json",
+      "sampleHash": "4b401fa80206c7f284bd3a723511b7fa73172a0df87ff157eecdfb6efcde9254",
+      "capturedAt": "2026-08-29T22:10:43.042Z",
+      "observedAt": "2026-08-29T22:11:07.824Z"
+    },
+    {
+      "callId": "2-87dedbd2",
+      "source": "clock",
+      "key": "current",
+      "mode": "replay",
+      "sample": "input/data/clock/samples/current.json",
+      "sampleHash": "9e52314c6d67c3bc2fe31034af58a2725b60ebb5925dc4e2829e18387c7f13f5",
+      "capturedAt": "2026-08-29T22:10:43.042Z",
+      "observedAt": "2026-08-29T22:11:07.823Z"
+    }
+  ],
+  "finishedAt": "2026-08-29T22:11:07.824Z",
+  "durationMs": 44.408,
+  "ok": true,
+  "result": {
+    "message": "Good evening, Ada!"
+  }
+}

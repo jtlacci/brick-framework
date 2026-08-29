@@ -45,7 +45,7 @@ const { runId, result } = await run(input, {
 
 `src/index.js` exports `execute()` only for its runner. It receives wrapped adapters as arguments. It may import local source files and pure libraries listed in `config.yml` under `srcLibraries`, but it may not import filesystem, network, process, runner, input, or another module code. The boundary checker rejects direct I/O imports and common I/O globals; reviewing an allowed library as genuinely I/O-free remains a human responsibility.
 
-An adapter owns one external boundary: an HTTP API, database, filesystem, clock, queue, or another module. Each adapter supplies `fetch(args)` and may supply a stable `key(args)`. The framework wrapper, not the adapter author, owns recording and replay.
+An adapter owns one external boundary: an HTTP API, database, filesystem, clock, queue, or another module. Each adapter supplies `fetch(args)` and may supply a stable, deterministic, I/O-free `key(args)`. The framework wrapper, not the adapter author, owns recording and replay.
 
 ### Replay and fresh modes
 

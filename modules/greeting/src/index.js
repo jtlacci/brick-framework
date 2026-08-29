@@ -9,8 +9,11 @@ export async function execute({ input, adapters }) {
   if (typeof input?.name !== "string" || input.name.trim() === "") {
     throw new Error("name must be a non-empty string");
   }
-  const clock = await adapters.clock();
+  const [clock, identity] = await Promise.all([
+    adapters.clock(),
+    adapters.identity({ name: input.name }),
+  ]);
   return {
-    message: `Good ${periodFor(clock.iso)}, ${input.name.trim()}!`,
+    message: `Good ${periodFor(clock.iso)}, ${identity.result.name}!`,
   };
 }

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260829221107845-04f04289",
+  "module": "identity",
+  "mode": "replay",
+  "kind": "test",
+  "testName": "smoke",
+  "startedAt": "2026-08-29T22:11:07.845Z",
+  "input": {
+    "name": "  Ada  "
+  },
+  "adapterCalls": [],
+  "finishedAt": "2026-08-29T22:11:07.847Z",
+  "durationMs": 2.7,
+  "ok": true,
+  "result": {
+    "name": "Ada"
+  }
+}
