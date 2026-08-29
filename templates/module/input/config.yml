@@ -1,5 +1,0 @@
-module: __MODULE_NAME__
-retention:
-  runs: 10
-  adapterCalls: 10
-srcLibraries: []
