@@ -2,7 +2,7 @@
 
 import unittest
 
-from modules.example_module.runner.run import run
+from ..run import run
 
 
 TEST_INPUT = {}
