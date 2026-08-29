@@ -17,6 +17,8 @@ This folder owns every external-source boundary and sibling-brick boundary for t
 - A sibling adapter must call the sibling brick's `run` entry point.
 - Adapters are called by `src/` with a plain run context containing the owning run ID, mode, and resolved adapter configuration.
 - Adapters never import or call `src/` or `runner/`.
+- Each adapter interprets the run mode: saved mode reads matching data from `input/data/`; fresh mode calls the real source and writes the new raw result there.
+- Each adapter owns its persistence directly under this brick's `input/data/`; it does not use a runner-owned store.
 
 ## Saved data
 

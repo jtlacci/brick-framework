@@ -6,6 +6,7 @@ This folder owns orchestration, run identity, run history, and smoke tests.
 
 - `run.py` contains the brick's only repository-internal entry point: `run`.
 - `run` creates a run ID through `rng.py`, resolves configuration, builds a plain run context, calls `src/`, records the run outcome, and returns the result.
+- `run` passes its caller-supplied brick input unchanged into `src` with the run context.
 - `runner/` does not call input adapters directly. Adapter calls belong to `src/`.
 - Do not expose adapters or `src/` functions to sibling bricks.
 
