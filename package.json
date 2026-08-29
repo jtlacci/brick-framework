@@ -1,0 +1,15 @@
+{
+  "name": "visible-modules",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check-boundaries.mjs",
+    "test": "npm run check && node scripts/run-smoke-tests.mjs",
+    "test:fresh": "npm run check && node scripts/run-smoke-tests.mjs --FRESH",
+    "module:new": "node scripts/create-module.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "source": "clock",
+  "key": "current",
+  "runId": "20260829220301943-228d6f39",
+  "callId": "1-232b6797",
+  "capturedAt": "2026-08-29T22:03:01.944Z",
+  "args": {},
+  "ok": true,
+  "value": {
+    "iso": "2026-08-29T22:03:01.944Z"
+  }
+}

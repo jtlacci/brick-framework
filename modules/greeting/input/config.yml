@@ -1,0 +1,5 @@
+module: greeting
+retention:
+  runs: 10
+  adapterCalls: 10
+srcLibraries: []

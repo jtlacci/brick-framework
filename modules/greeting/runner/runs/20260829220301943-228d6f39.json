@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260829220301943-228d6f39",
+  "module": "greeting",
+  "mode": "fresh",
+  "kind": "run",
+  "startedAt": "2026-08-29T22:03:01.943Z",
+  "input": {
+    "name": "Ada"
+  },
+  "adapterCalls": [
+    {
+      "callId": "1-232b6797",
+      "source": "clock",
+      "key": "current",
+      "mode": "fresh",
+      "sample": "input/data/clock/samples/current.json",
+      "sampleHash": "67f4430608222c1b15741ac0ee9e3b14fcf108b766fb5b778186d70673dfcdc1",
+      "capturedAt": "2026-08-29T22:03:01.944Z"
+    }
+  ],
+  "finishedAt": "2026-08-29T22:03:01.946Z",
+  "durationMs": 2.176,
+  "ok": true,
+  "result": {
+    "message": "Good evening, Ada!"
+  }
+}

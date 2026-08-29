@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260829220319554-caf2dea9",
+  "module": "greeting",
+  "mode": "replay",
+  "kind": "test",
+  "testName": "basic",
+  "startedAt": "2026-08-29T22:03:19.554Z",
+  "input": {
+    "name": "Ada"
+  },
+  "adapterCalls": [],
+  "finishedAt": "2026-08-29T22:03:19.562Z",
+  "durationMs": 6.608,
+  "ok": false,
+  "error": {
+    "name": "Error",
+    "message": "No saved sample for adapter 'clock' key 'current'. Run the smoke test with --FRESH.",
+    "stack": "Error: No saved sample for adapter 'clock' key 'current'. Run the smoke test with --FRESH.\n    at adapters.<computed> [as clock] (file:///Users/johnsterlacci/Documents/Codex/2026-08-29/i-want-to-create-a-framework/modules/_framework/create-adapters.js:37:19)\n    at async execute (file:///Users/johnsterlacci/Documents/Codex/2026-08-29/i-want-to-create-a-framework/modules/greeting/src/index.js:12:17)\n    at async run (file:///Users/johnsterlacci/Documents/Codex/2026-08-29/i-want-to-create-a-framework/modules/_framework/create-module-runner.js:46:22)\n    at async file:///Users/johnsterlacci/Documents/Codex/2026-08-29/i-want-to-create-a-framework/scripts/run-smoke-tests.mjs:21:23"
+  }
+}
