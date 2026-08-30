@@ -36,6 +36,8 @@ class BrickOutput(TypedDict): ...
 
 Smoke tests are not required per brick. Keep them only under `runner/tests/` for the most top-level flows, with at most three files. They prove integration through `run`. Put focused domain tests under `src/tests/` only when the private logic warrants them.
 
+Sibling adapters still import only the sibling's top-level `run`; `contract.py` is not another exported API. The `run` annotations expose the boundary to static tooling, while each adapter translates into its owning brick's types.
+
 Split a brick when `run` becomes a large dispatcher, its adapters stop being easy to understand, or unrelated changes repeatedly touch the same `src/`.
 
 ## Saved, fresh, and save
@@ -58,11 +60,13 @@ Examples use stable paths and canonical JSON, so normal runs do not churn Git. A
 
 `bricks/__init__.py` enables repository-wide standard-library test discovery. Each brick's top-level file defines its repository-internal entry point. Keep `runner/__init__.py`; add `runner/tests/__init__.py` only when that top-level flow has smoke tests. `input/`, `adapters/`, and `src/` do not need package-marker files.
 
-Run all smoke tests with:
+Once at least one top-level flow has a smoke test, run all smoke tests with:
 
 ```sh
 python3 -m unittest discover -s bricks -t . -v
 ```
+
+Python's test runner exits with status 5 when no tests exist, which is the expected state of this empty boilerplate.
 
 Check brick shape, import direction, public exports, and evidence limits with:
 

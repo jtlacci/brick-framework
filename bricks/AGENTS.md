@@ -22,7 +22,8 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 
 - The brick's top-level `__init__.py` exposes only the repository-internal `run` entry point from `runner/run.py`.
 - `contract.py` declares `CONTRACT_VERSION`, typed `BrickInput` and `BrickOutput`, `SIBLING_DEPENDENCIES`, and `OWNED_STATE`.
-- `SIBLING_DEPENDENCIES` maps each sibling name to `eventual` or `orchestrated`. `eventual` accepts independently committed state and possible lag. `orchestrated` means this brick is the parent responsible for sequencing and compensation; it does not imply a distributed transaction.
+- `contract.py` is not a second public surface. Sibling adapters import only `run`; its annotations carry the boundary types, and the adapter translates into its owning brick's types.
+- `SIBLING_DEPENDENCIES` maps each sibling name to `eventual` or `orchestrated`. `eventual` accepts independently committed state and possible lag. `orchestrated` means the importing, dependent brick is responsible for sequencing and compensation; it does not imply a distributed transaction.
 - The declared sibling graph must be acyclic. A cycle is a signal to merge responsibilities or introduce a parent brick.
 - `OWNED_STATE` lists stable application-resource identifiers. No identifier may be owned by two bricks. Local evidence in `input/data/` and `runner/runs/` does not need to be listed.
 - `runner/` creates the run context, calls private `src/` logic, and records the run outcome.
