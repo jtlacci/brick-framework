@@ -13,7 +13,8 @@ This repository uses Python file boilerplate to organize one codebase as discret
 
 - Optimize for human and agent visibility, not framework machinery.
 - A brick may be complex inside `src/`, but its inputs and recent runs must make its behavior understandable.
-- Keep this repository as boilerplate. Do not add shared runtimes, generators, enforcement systems, or dependencies unless the user explicitly requests them.
+- Keep this repository as boilerplate. Do not add shared runtimes, generators, dependencies, or heavier enforcement unless the user explicitly requests them.
+- Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
 
 ## Non-negotiable rules
 
@@ -22,9 +23,11 @@ This repository uses Python file boilerplate to organize one codebase as discret
 - A brick exposes only its `run` entry point to sibling bricks.
 - External access crosses an external-source adapter; sibling-brick access crosses a sibling adapter.
 - Bricks are used only inside this repository. Do not package or expose them for outside consumers.
-- Saved adapter results and run records are local, bounded by configuration, and tracked in Git.
-- Keep only a small number of high-level smoke tests.
+- Saved adapter examples and run records are local, bounded by configuration, and tracked in Git.
+- Keep only a small number of high-level smoke tests, while allowing focused tests for complex `src/` logic.
 
-## Contract precedence
+## Contract placement and precedence
 
-This file applies to the whole repository. A nested `BRICK.md` adds rules for its folder and descendants; it may not relax a parent rule.
+`AGENTS.md` rules apply to their folder and descendants. A nested `AGENTS.md` adds rules for its subtree and may not relax a parent rule.
+
+Not every folder needs an `AGENTS.md`. Add one only where the folder introduces a distinct responsibility or additional rule. This boilerplate keeps contracts at the repository root, `bricks/`, and each brick's `input/`, `runner/`, and `src/` boundaries. A brick-level `AGENTS.md` is optional and should contain only domain-specific additions.

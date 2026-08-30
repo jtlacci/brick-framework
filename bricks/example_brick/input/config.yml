@@ -2,6 +2,10 @@ brick: example_brick
 
 retention:
   runs: 10
-  adapter_calls: 10
+  saved_examples_per_adapter: 3
+
+limits:
+  max_evidence_bytes: 16384
+  max_run_record_bytes: 16384
 
 # Add brick-specific configuration below.
