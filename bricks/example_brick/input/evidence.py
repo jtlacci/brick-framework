@@ -13,6 +13,8 @@ import re
 import tempfile
 from typing import Any
 
+from ..contract import CONTRACT_VERSION
+
 
 DATA_DIR = Path(__file__).with_name("data")
 DEFAULT_MAX_BYTES = 122_880
@@ -46,6 +48,8 @@ def load_example(adapter: str, case: str, request: dict[str, Any]) -> dict[str, 
         raise EvidenceError(f"saved example does not exist: {path}")
 
     record = json.loads(path.read_text(encoding="utf-8"))
+    if record.get("contract_version") != CONTRACT_VERSION:
+        raise EvidenceError(f"saved example contract version does not match: {path}")
     normalized_request = _redact(_normalize(request))
     if record.get("request") != normalized_request:
         raise EvidenceError(f"saved request does not match case {adapter}/{case}")
@@ -72,6 +76,7 @@ def save_example(
         "adapter": adapter,
         "capture_run_id": capture_run_id,
         "case": case,
+        "contract_version": CONTRACT_VERSION,
         "request": _redact(_normalize(request)),
         "schema_version": 1,
     }

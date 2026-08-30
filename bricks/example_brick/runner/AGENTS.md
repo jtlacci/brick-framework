@@ -5,6 +5,7 @@ This folder owns orchestration, brick-local run identity, run history, and smoke
 ## Brick entry point
 
 - `run.py` contains the brick's only repository-internal entry point: `run`.
+- Annotate `run` with the brick's `BrickInput` and `BrickOutput` types from `contract.py`.
 - `run` accepts ordinary inputs plus keyword-only `fresh` and `save` options. `save=True` implies a fresh call.
 - `run` creates a run ID through `rng.py`, resolves configuration, builds a plain run context, calls `src/`, records the run outcome, and returns the result.
 - `run` passes its caller-supplied brick input unchanged into `src` with the run context.
@@ -23,9 +24,10 @@ This folder owns orchestration, brick-local run identity, run history, and smoke
 
 ## Tests
 
-- Keep only a handful of high-level smoke tests under `tests/`.
-- Use one file per smoke test. Each smoke test defines an explicit input and passes it directly to `run`.
+- Smoke tests prove integration through the public brick boundary. Focused `src` tests prove domain correctness.
+- `runner/tests/` is optional and reserved for the repository's most top-level flows: bricks that no other brick depends on.
+- Do not add smoke tests to every brick. A top-level flow may have at most three smoke-test files, each defining an explicit input and calling only the brick's top-level `run`.
 - Default tests use saved examples. A fresh test affects only its own brick; it never makes sibling runs fresh.
 - Use a save test only when deliberately replacing reviewed committed examples.
-- Focused unit tests inside `src/` are allowed when its domain logic needs them; avoid a large framework-driven test hierarchy.
-- Keep `runner/__init__.py` and `runner/tests/__init__.py` so sibling bricks with the same test filenames retain distinct import paths during discovery.
+- Focused tests under `src/tests/` are optional and may directly test private domain logic. Organize them only when the logic warrants it.
+- If `runner/tests/` exists, keep its `__init__.py` so sibling bricks retain distinct test import paths during discovery.

@@ -1,7 +1,11 @@
 """The brick's repository-internal entry point."""
 
+from ..contract import BrickInput, BrickOutput
 
-def run(inputs: dict, *, fresh: bool = False, save: bool = False) -> dict:
+
+def run(
+    inputs: BrickInput, *, fresh: bool = False, save: bool = False
+) -> BrickOutput:
     """Run the brick and return its output.
 
     ``fresh`` performs this brick's external calls without changing tracked

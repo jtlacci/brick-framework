@@ -9,6 +9,7 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 ```text
 <brick_name>/
 ├── __init__.py
+├── contract.py
 ├── input/
 │   └── AGENTS.md
 ├── runner/
@@ -20,6 +21,10 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 ## Boundaries
 
 - The brick's top-level `__init__.py` exposes only the repository-internal `run` entry point from `runner/run.py`.
+- `contract.py` declares `CONTRACT_VERSION`, typed `BrickInput` and `BrickOutput`, `SIBLING_DEPENDENCIES`, and `OWNED_STATE`.
+- `SIBLING_DEPENDENCIES` maps each sibling name to `eventual` or `orchestrated`. `eventual` accepts independently committed state and possible lag. `orchestrated` means this brick is the parent responsible for sequencing and compensation; it does not imply a distributed transaction.
+- The declared sibling graph must be acyclic. A cycle is a signal to merge responsibilities or introduce a parent brick.
+- `OWNED_STATE` lists stable application-resource identifiers. No identifier may be owned by two bricks. Local evidence in `input/data/` and `runner/runs/` does not need to be listed.
 - `runner/` creates the run context, calls private `src/` logic, and records the run outcome.
 - `input/` owns configuration, external-source adapters, sibling adapters, and saved adapter examples.
 - `src/` owns private domain logic and may call its own `input/` adapters when it needs data or an external effect.
@@ -28,8 +33,9 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 - Each adapter owns saved, fresh, and save behavior.
 - `src` may import adapters from its own brick, but it may not directly import external clients or sibling bricks.
 - A sibling brick may be reached only through a sibling adapter that calls the sibling's `run` entry point.
+- Every sibling adapter must correspond to a declared sibling dependency.
 - Invocation mode and run identity never propagate across a brick boundary. A sibling adapter calls the sibling `run` with ordinary inputs and no `fresh` or `save` option; the sibling creates its own run ID and uses its default saved mode.
 - Do not import another brick's `src/`, `runner/`, configuration, or saved data.
 - Do not package bricks for, or expose them to, consumers outside this repository.
 
-Do not add `__init__.py` merely to mark folders. Keep the repository `bricks/` file for discovery, the brick-level file for the internal entry point, and the two files under `runner/` and `runner/tests/` for brick-qualified test discovery. The other folders use namespace-package behavior.
+Do not add `__init__.py` merely to mark folders. Keep the repository `bricks/` file for discovery, the brick-level file for the internal entry point, and `runner/__init__.py`. Add `runner/tests/__init__.py` only when a top-level flow has smoke tests. The other folders use namespace-package behavior.

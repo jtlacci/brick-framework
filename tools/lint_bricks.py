@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ from typing import Any
 
 REQUIRED = (
     "__init__.py",
+    "contract.py",
     "input/AGENTS.md",
     "input/adapters",
     "input/config.yml",
@@ -23,7 +25,6 @@ REQUIRED = (
     "runner/rng.py",
     "runner/run.py",
     "runner/runs",
-    "runner/tests/__init__.py",
     "src/AGENTS.md",
 )
 CONFIG_DEFAULTS = {
@@ -40,6 +41,13 @@ SENSITIVE = {
     "access_token", "api_key", "authorization", "client_secret", "cookie", "cookies",
     "headers", "password", "refresh_token", "secret", "set-cookie", "token", "x-api-key",
 }
+
+
+@dataclass
+class Contract:
+    version: int = 0
+    dependencies: dict[str, str] = field(default_factory=dict)
+    owned_state: tuple[str, ...] = ()
 
 
 class Lint:
@@ -88,7 +96,68 @@ def called_name(node: ast.Call) -> str:
     return ""
 
 
-def lint_python(brick: Path, lint: Lint) -> None:
+def annotation_name(node: ast.expr | None) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def assigned_literal(tree: ast.Module, name: str) -> Any:
+    for node in tree.body:
+        value = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == name:
+                value = node.value
+        if value is not None:
+            try:
+                return ast.literal_eval(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def lint_contract(brick: Path, lint: Lint) -> Contract:
+    path = brick / "contract.py"
+    tree = lint.tree(path)
+    if not tree:
+        return Contract()
+
+    version = assigned_literal(tree, "CONTRACT_VERSION")
+    dependencies = assigned_literal(tree, "SIBLING_DEPENDENCIES")
+    owned_state = assigned_literal(tree, "OWNED_STATE")
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        lint.add(path, "CONTRACT_VERSION must be a positive integer")
+        version = 0
+    if not isinstance(dependencies, dict) or not all(
+        isinstance(name, str)
+        and isinstance(mode, str)
+        and mode in {"eventual", "orchestrated"}
+        for name, mode in (dependencies.items() if isinstance(dependencies, dict) else ())
+    ):
+        lint.add(path, "SIBLING_DEPENDENCIES must map names to eventual or orchestrated")
+        dependencies = {}
+    if not isinstance(owned_state, (tuple, list)) or not all(
+        isinstance(item, str) and item for item in owned_state
+    ):
+        lint.add(path, "OWNED_STATE must contain non-empty resource identifiers")
+        owned_state = ()
+    for class_name in ("BrickInput", "BrickOutput"):
+        declaration = classes.get(class_name)
+        if not declaration or not any(annotation_name(base) == "TypedDict" for base in declaration.bases):
+            lint.add(path, f"{class_name} must be declared as a TypedDict")
+
+    return Contract(version, dict(dependencies), tuple(owned_state))
+
+
+def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
     entry = lint.tree(brick / "__init__.py")
     if entry:
         imports_run = any(
@@ -120,7 +189,12 @@ def lint_python(brick: Path, lint: Lint) -> None:
         options = {arg.arg for arg in function.args.kwonlyargs} if function else set()
         if not {"fresh", "save"}.issubset(options):
             lint.add(brick / "runner/run.py", "run needs keyword-only fresh and save options")
+        if function:
+            input_type = annotation_name(function.args.args[0].annotation) if function.args.args else ""
+            if input_type != "BrickInput" or annotation_name(function.returns) != "BrickOutput":
+                lint.add(brick / "runner/run.py", "run must use BrickInput and BrickOutput annotations")
 
+    actual_dependencies: set[str] = set()
     for path in brick.rglob("*.py"):
         tree = lint.tree(path)
         if not tree:
@@ -130,6 +204,10 @@ def lint_python(brick: Path, lint: Lint) -> None:
         adapter = relative[:2] == ("input", "adapters")
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom):
+                    package_depth = len(relative[:-1])
+                    if node.level > package_depth + 1:
+                        lint.add(path, "relative import may not escape the brick")
                 for module in imported_modules(node):
                     parts = module.lstrip(".").split(".")
                     if role == "runner" and "input" in parts:
@@ -142,6 +220,7 @@ def lint_python(brick: Path, lint: Lint) -> None:
                         if parts[0] in DIRECT_IO:
                             lint.add(path, f"src imports direct-I/O module {parts[0]!r}")
                     if len(parts) > 1 and parts[0] == "bricks" and parts[1] != brick.name:
+                        actual_dependencies.add(parts[1])
                         if not adapter:
                             lint.add(path, "only an input adapter may import a sibling brick")
                         elif (
@@ -150,12 +229,17 @@ def lint_python(brick: Path, lint: Lint) -> None:
                             or [n.name for n in node.names] != ["run"]
                         ):
                             lint.add(path, "sibling adapter may import only run")
+                        if parts[1] not in contract.dependencies:
+                            lint.add(path, f"sibling dependency {parts[1]!r} is not declared")
             if role == "src" and isinstance(node, ast.Call) and called_name(node) == "open":
                 lint.add(path, "src filesystem access must use an adapter")
             if adapter and isinstance(node, ast.Call) and called_name(node) == "run":
                 forwarded = {word.arg for word in node.keywords} & {"fresh", "save"}
                 if forwarded:
                     lint.add(path, "sibling run may not receive fresh or save")
+
+    for dependency in contract.dependencies.keys() - actual_dependencies:
+        lint.add(brick / "contract.py", f"declared dependency {dependency!r} has no static adapter import", warning=True)
 
 
 def read_json(path: Path, lint: Lint) -> Any:
@@ -193,7 +277,14 @@ def lint_records(brick: Path, limits: dict[str, int], lint: Lint) -> None:
         record = read_json(path, lint)
         if not isinstance(record, dict):
             continue
-        required = {"schema_version", "adapter", "case", "capture_run_id", "request"}
+        required = {
+            "schema_version",
+            "contract_version",
+            "adapter",
+            "case",
+            "capture_run_id",
+            "request",
+        }
         if required - record.keys():
             lint.add(path, "evidence is missing required fields")
         if record.get("adapter") != adapter or record.get("case") != case:
@@ -217,25 +308,98 @@ def lint_records(brick: Path, limits: dict[str, int], lint: Lint) -> None:
         read_json(path, lint)
 
 
-def lint_brick(brick: Path, lint: Lint) -> None:
+def lint_smokes(brick: Path, *, top_level: bool, lint: Lint) -> None:
+    tests_dir = brick / "runner/tests"
+    tests = sorted(tests_dir.glob("test_*.py")) if tests_dir.exists() else []
+    if not tests:
+        return
+    if not (tests_dir / "__init__.py").is_file():
+        lint.add(tests_dir / "__init__.py", "smoke-test package marker is missing")
+    if tests and not top_level:
+        lint.add(tests_dir, "smoke tests belong only to top-level flow bricks")
+    if len(tests) > 3:
+        lint.add(tests_dir, "top-level flow may have at most three smoke-test files")
+    for path in tests:
+        tree = lint.tree(path)
+        if not tree:
+            continue
+        if any(
+            isinstance(node, ast.Attribute) and node.attr.startswith("skip")
+            for node in ast.walk(tree)
+        ):
+            lint.add(path, "contains a skipped smoke test; it proves no integration", warning=True)
+        calls_run = any(
+            isinstance(node, ast.Call) and called_name(node) == "run" for node in ast.walk(tree)
+        )
+        if not calls_run:
+            lint.add(path, "smoke test must call the brick's public run")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                lint.add(path, "smoke test must import run from the top-level brick")
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("bricks"):
+                if node.module != f"bricks.{brick.name}" or [item.name for item in node.names] != ["run"]:
+                    lint.add(path, "smoke test may import only its brick's top-level run")
+            if isinstance(node, ast.Import) and any(item.name.startswith("bricks") for item in node.names):
+                lint.add(path, "smoke test must use from bricks.<name> import run")
+
+
+def lint_brick(brick: Path, contract: Contract, *, top_level: bool, lint: Lint) -> None:
     for relative in REQUIRED:
         if not (brick / relative).exists():
             lint.add(brick / relative, "required brick path is missing")
     config_path = brick / "input/config.yml"
     config = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
     limits = {key: config_number(config, key, lint, config_path) for key in CONFIG_DEFAULTS}
-    lint_python(brick, lint)
+    lint_python(brick, contract, lint)
     lint_records(brick, limits, lint)
-    tests = sorted((brick / "runner/tests").glob("test_*.py"))
-    if not tests:
-        lint.add(brick / "runner/tests", "no smoke tests", warning=True)
-    for path in tests:
-        tree = lint.tree(path)
-        if tree and any(
-            isinstance(node, ast.Attribute) and node.attr.startswith("skip")
-            for node in ast.walk(tree)
-        ):
-            lint.add(path, "contains a skipped smoke test; it proves no behavior", warning=True)
+    lint_smokes(brick, top_level=top_level, lint=lint)
+
+
+def lint_graph(
+    bricks: list[Path], contracts: dict[str, Contract], lint: Lint
+) -> set[str]:
+    names = set(contracts)
+    incoming: set[str] = set()
+    owners: dict[str, str] = {}
+    graph: dict[str, set[str]] = {name: set() for name in names}
+
+    for name, contract in contracts.items():
+        for dependency in contract.dependencies:
+            if dependency == name:
+                lint.add(next(brick for brick in bricks if brick.name == name) / "contract.py", "brick may not depend on itself")
+            elif dependency not in names:
+                lint.add(next(brick for brick in bricks if brick.name == name) / "contract.py", f"unknown sibling dependency {dependency!r}")
+            else:
+                graph[name].add(dependency)
+                incoming.add(dependency)
+        for resource in contract.owned_state:
+            if resource in owners:
+                lint.add(
+                    next(brick for brick in bricks if brick.name == name) / "contract.py",
+                    f"state {resource!r} is already owned by {owners[resource]!r}",
+                )
+            else:
+                owners[resource] = name
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str, trail: tuple[str, ...]) -> None:
+        if name in visiting:
+            cycle = " -> ".join((*trail, name))
+            lint.add(lint.root / "bricks", f"sibling dependency cycle: {cycle}")
+            return
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in graph[name]:
+            visit(dependency, (*trail, name))
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in sorted(names):
+        visit(name, ())
+    return names - incoming
 
 
 def main() -> int:
@@ -250,8 +414,20 @@ def main() -> int:
     for path in root.rglob("BRICK.md"):
         lint.add(path, "contract must be named AGENTS.md")
     if bricks.is_dir():
-        for brick in sorted(p for p in bricks.iterdir() if p.is_dir() and not p.name.startswith((".", "__"))):
-            lint_brick(brick, lint)
+        brick_paths = sorted(
+            path
+            for path in bricks.iterdir()
+            if path.is_dir() and not path.name.startswith((".", "__"))
+        )
+        contracts = {brick.name: lint_contract(brick, lint) for brick in brick_paths}
+        top_level = lint_graph(brick_paths, contracts, lint)
+        for brick in brick_paths:
+            lint_brick(
+                brick,
+                contracts[brick.name],
+                top_level=brick.name in top_level,
+                lint=lint,
+            )
     else:
         lint.add(bricks, "bricks directory is missing")
     for item in lint.warnings:

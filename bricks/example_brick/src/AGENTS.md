@@ -11,3 +11,5 @@ This folder owns the brick's private domain logic. Its internal organization is 
 - Libraries are allowed only when their use is local and does not make external calls.
 - Keep behavior deterministic for the same supplied inputs unless randomness is explicitly passed in.
 - Export functions only for use by this brick's `runner/`; the repository-internal brick entry point remains `run` alone.
+- Focused tests here prove domain rules and invariants. They are distinct from the few top-level smoke tests that prove integration.
+- Split the brick when unrelated domain responsibilities make this folder change together repeatedly.
