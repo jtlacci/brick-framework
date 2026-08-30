@@ -29,8 +29,8 @@ REQUIRED = (
 CONFIG_DEFAULTS = {
     "runs": 10,
     "saved_examples_per_adapter": 3,
-    "max_evidence_bytes": 16_384,
-    "max_run_record_bytes": 16_384,
+    "max_evidence_bytes": 122_880,
+    "max_run_record_bytes": 122_880,
 }
 DIRECT_IO = {
     "boto3", "ftplib", "httpx", "os", "pathlib", "psycopg", "requests",

@@ -5,7 +5,7 @@ retention:
   saved_examples_per_adapter: 3
 
 limits:
-  max_evidence_bytes: 16384
-  max_run_record_bytes: 16384
+  max_evidence_bytes: 122880  # 120 KiB
+  max_run_record_bytes: 122880  # 120 KiB
 
 # Add brick-specific configuration below.

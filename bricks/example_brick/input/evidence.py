@@ -15,7 +15,7 @@ from typing import Any
 
 
 DATA_DIR = Path(__file__).with_name("data")
-DEFAULT_MAX_BYTES = 16_384
+DEFAULT_MAX_BYTES = 122_880
 _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _REDACTED_KEYS = {
     "access_token",
