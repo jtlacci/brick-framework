@@ -89,7 +89,11 @@ class BoilerplateTests(Fixture):
 class LaneTests(Fixture):
     def test_absent_lane_is_strict(self) -> None:
         brick = self.brick()
-        self.assertNotIn("LANE", (brick / "contract.py").read_text(encoding="utf-8"))
+        path = brick / "contract.py"
+        kept = [line for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if not line.startswith("LANE")]
+        path.write_text("".join(kept), encoding="utf-8")
+        self.assertNotIn("LANE =", path.read_text(encoding="utf-8"))
         lint = lint_bricks.lint_repo(self.root)
         self.assertEqual(lint.errors, [])
         self.assertEqual(lint_bricks.lint_contract(brick, lint).lane, "strict")
