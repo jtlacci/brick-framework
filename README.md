@@ -51,8 +51,8 @@ run(inputs, *, fresh=False, save=False)
 | Option | Adapter behavior | Tracked example data |
 | --- | --- | --- |
 | default | Replay the named saved example | Read only |
-| `fresh=True` (`--FRESH`) | Call the real source | Unchanged |
-| `save=True` (`--SAVE`) | Call the real source, redact and validate it | Atomically replace the named example |
+| `fresh=True` | Call the real source | Unchanged |
+| `save=True` | Call the real source, redact and validate it | Atomically replace the named example |
 
 `save=True` implies a fresh call. A missing or mismatched saved example is an error, never an implicit live call. Neither option propagates when a sibling adapter calls another brick.
 
