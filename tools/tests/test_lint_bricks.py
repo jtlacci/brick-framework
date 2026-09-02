@@ -46,6 +46,15 @@ class Fixture(unittest.TestCase):
                 lines.append(f"{name} = {value}\n")
         path.write_text("".join(lines), encoding="utf-8")
 
+
+    def pure_brick(self, name: str = "example_brick") -> Path:
+        """The template with its one adapter and the evidence loader removed."""
+        brick = self.brick(name)
+        (brick / "input/adapters/example_source.py").unlink()
+        (brick / "input/evidence.py").unlink()
+        self.contract(brick, LANE='"pure"')
+        return brick
+
     def errors(self) -> list[str]:
         return lint_bricks.lint_repo(self.root).errors
 
@@ -101,6 +110,71 @@ class LaneTests(Fixture):
     def test_non_string_lane_is_an_error(self) -> None:
         self.contract(self.brick(), LANE="1")
         self.assertError("LANE must be one of")
+
+
+class PureLaneTests(Fixture):
+    def test_pure_brick_lints_clean(self) -> None:
+        self.pure_brick()
+        self.assertClean()
+
+    def test_template_is_not_pure(self) -> None:
+        # The template ships one adapter and a filesystem evidence loader:
+        # both are exactly what a pure brick gives up.
+        self.contract(self.brick(), LANE='"pure"')
+        self.assertError("pure brick may not have adapters")
+        self.assertError("input/evidence.py: pure brick imports 'pathlib' outside runner/")
+
+    def test_pure_brick_may_not_declare_sibling_dependencies(self) -> None:
+        self.brick("other")
+        self.contract(self.pure_brick(), SIBLING_DEPENDENCIES='{"other": "eventual"}')
+        self.assertError("pure brick may not declare sibling dependencies")
+
+    def test_pure_brick_bans_direct_io_outside_runner(self) -> None:
+        brick = self.pure_brick()
+        (brick / "input/loader.py").write_text("import os\n", encoding="utf-8")
+        self.assertError("input/loader.py: pure brick imports 'os' outside runner/")
+
+    def test_pure_brick_reports_src_direct_io_once(self) -> None:
+        brick = self.pure_brick()
+        (brick / "src/helpers.py").write_text("import os\n", encoding="utf-8")
+        hits = [item for item in self.errors() if "src/helpers.py" in item]
+        self.assertEqual(hits, ["bricks/example_brick/src/helpers.py: src imports direct-I/O module 'os'"])
+
+    def test_pure_brick_bans_random_and_time_outside_runner(self) -> None:
+        brick = self.pure_brick()
+        (brick / "src/helpers.py").write_text("import random\nfrom time import sleep\n", encoding="utf-8")
+        self.assertError("pure brick imports 'random' outside runner/")
+        self.assertError("pure brick imports 'time' outside runner/")
+
+    def test_pure_brick_runner_keeps_its_io(self) -> None:
+        brick = self.pure_brick()
+        (brick / "runner/rng.py").write_text("import random\nimport pathlib\nimport time\n", encoding="utf-8")
+        self.assertClean()
+
+    def test_pure_brick_may_not_read_the_clock(self) -> None:
+        brick = self.pure_brick()
+        (brick / "src/logic.py").write_text(
+            "from datetime import datetime\n\n\ndef stamp():\n    return datetime.now()\n",
+            encoding="utf-8",
+        )
+        self.assertError("src/logic.py: pure brick reads the clock with now()")
+
+    def test_pure_brick_may_use_datetime_arithmetic(self) -> None:
+        brick = self.pure_brick()
+        (brick / "src/logic.py").write_text(
+            "from datetime import datetime, timedelta\n\n\n"
+            "def tomorrow(now: datetime) -> datetime:\n    return now + timedelta(days=1)\n",
+            encoding="utf-8",
+        )
+        self.assertClean()
+
+    def test_strict_brick_may_read_the_clock_in_src(self) -> None:
+        brick = self.brick()
+        (brick / "src/logic.py").write_text(
+            "from datetime import datetime\n\n\ndef stamp():\n    return datetime.now()\n",
+            encoding="utf-8",
+        )
+        self.assertClean()
 
 
 if __name__ == "__main__":

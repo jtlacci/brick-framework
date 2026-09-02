@@ -354,6 +354,45 @@ def lint_strict(brick: Path, contract: Contract, lint: Lint) -> None:
     """The regular lane. Every rule above already applies; this adds none."""
 
 
+PURE_FORBIDDEN = DIRECT_IO | {"random", "time"}
+CLOCK_CALLS = {"now", "today", "utcnow"}
+
+
+def lint_pure(brick: Path, contract: Contract, lint: Lint) -> None:
+    """A pure brick's output is a function of its input and nothing else.
+
+    Adapters are the only sanctioned channel to the outside, so a pure brick
+    has none, and therefore no sibling dependencies either. The direct-I/O
+    ban every ``src/`` already carries widens to the whole brick, joined by
+    ``random`` and ``time``, and by the clock calls the ``src/`` contract has
+    always forbidden in prose. ``runner/`` is the one exemption: it writes
+    run records and owns ``rng.py``, so it keeps the filesystem and
+    randomness the rest of the brick gives up. ``datetime`` stays importable:
+    arithmetic on a caller-supplied time is pure; reading ``now()`` is not.
+    """
+    adapters = sorted((brick / "input/adapters").glob("*.py"))
+    for path in adapters:
+        lint.add(path, "pure brick may not have adapters")
+    if contract.dependencies:
+        lint.add(brick / "contract.py", "pure brick may not declare sibling dependencies")
+    for path in brick.rglob("*.py"):
+        relative = path.relative_to(brick).parts
+        if relative[0] == "runner":
+            continue
+        tree = lint.tree(path)
+        if not tree:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for module in imported_modules(node):
+                    name = module.lstrip(".").split(".")[0]
+                    # src/ already reports DIRECT_IO under the rule every brick gets.
+                    if name in PURE_FORBIDDEN and not (relative[0] == "src" and name in DIRECT_IO):
+                        lint.add(path, f"pure brick imports {name!r} outside runner/")
+            if isinstance(node, ast.Call) and called_name(node) in CLOCK_CALLS:
+                lint.add(path, f"pure brick reads the clock with {called_name(node)}()")
+
+
 # A lane is a declared enforcement class: the rules above plus the ones its
 # enforcer adds. A lane may only add rules, never relax one (AGENTS.md:
 # "may not relax a parent rule"), and it may not exist without an enforcer,
@@ -361,6 +400,7 @@ def lint_strict(brick: Path, contract: Contract, lint: Lint) -> None:
 # names. A contract with no LANE is in the strict lane.
 LANES = {
     "strict": lint_strict,
+    "pure": lint_pure,
 }
 
 
