@@ -73,3 +73,36 @@ Check brick shape, import direction, public exports, and evidence limits with:
 ```sh
 python3 tools/lint_bricks.py
 ```
+
+The tools have their own tests:
+
+```sh
+python3 -m unittest discover -s tools/tests -t . -v
+```
+
+## The review gate
+
+The linter decides everything an integer can decide. The rest of a lane is judgment, and `review/` holds it: `common.md` is the preamble every lane shares (what the linter already checked, what the model can and cannot see, how severity is assigned) and `<lane>.md` carries that lane's criteria. A change routed to a lane is judged by a model against those two files and returns findings, each `block` or `advisory`; a lane blocks only on a `block` finding.
+
+The gate is for repositories built on this framework, not for the framework itself. `.github/workflows/review.yml` is a reusable workflow; a repository enables it with one file:
+
+```yaml
+# .github/workflows/review.yml
+on: pull_request
+jobs:
+  review:
+    uses: jtlacci/brick-framework/.github/workflows/review.yml@main
+    secrets: inherit
+```
+
+Routing is derived from that repository's tree: a file under `bricks/<name>/` belongs to the lane its `contract.py` declares with `LANE` (`strict` when absent), and a file anywhere else is printed as not reviewed. The model reads the repository's `AGENTS.md`, `bricks/AGENTS.md`, the touched bricks' contracts and the diff, not the source tree, so the prompts forbid it from raising a finding whose only support is something it cannot see.
+
+A repository adds a lane by adding `review/<lane>.md` of its own; a file there with a framework lane's name replaces the framework's prompt for that lane. The `pure` and `workflow` prompts describe the mechanical half as enforced by the linter; until the linter carries those lanes, no brick declares them and every brick is reviewed as `strict`.
+
+Without an `ANTHROPIC_API_KEY` secret the job skips with a visible notice and passes; adding the secret turns the gate on. With the secret set, the review's exit status has three values: `0` passed, `1` blocked, `2` not reviewed (a provider failure that survived retries, a refusal, a misconfigured workflow). Not reviewed is a failure, not a pass. Verdicts are kept per pull request as a workflow artifact, so on the next push the model sees its own previous round and does not block the implementation of a suggestion it made; a push that touches no brick carries the previous verdict forward without a model call.
+
+Run the same review locally from the reviewed repository's root, with `ANTHROPIC_API_KEY` exported and `pip install anthropic`:
+
+```sh
+python3 path/to/brick-framework/tools/review.py
+```
