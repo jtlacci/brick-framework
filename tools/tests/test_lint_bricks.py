@@ -77,5 +77,31 @@ class BoilerplateTests(Fixture):
         self.assertError("src imports direct-I/O module 'requests'")
 
 
+class LaneTests(Fixture):
+    def test_absent_lane_is_strict(self) -> None:
+        brick = self.brick()
+        self.assertNotIn("LANE", (brick / "contract.py").read_text(encoding="utf-8"))
+        lint = lint_bricks.lint_repo(self.root)
+        self.assertEqual(lint.errors, [])
+        self.assertEqual(lint_bricks.lint_contract(brick, lint).lane, "strict")
+
+    def test_every_lane_has_an_enforcer(self) -> None:
+        self.assertIn("strict", lint_bricks.LANES)
+        for lane, enforcer in lint_bricks.LANES.items():
+            self.assertTrue(callable(enforcer), lane)
+
+    def test_declared_strict_lints_clean(self) -> None:
+        self.contract(self.brick(), LANE='"strict"')
+        self.assertClean()
+
+    def test_unknown_lane_is_an_error(self) -> None:
+        self.contract(self.brick(), LANE='"permissive"')
+        self.assertError("LANE must be one of")
+
+    def test_non_string_lane_is_an_error(self) -> None:
+        self.contract(self.brick(), LANE="1")
+        self.assertError("LANE must be one of")
+
+
 if __name__ == "__main__":
     unittest.main()

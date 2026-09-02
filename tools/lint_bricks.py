@@ -48,6 +48,7 @@ class Contract:
     version: int = 0
     dependencies: dict[str, str] = field(default_factory=dict)
     owned_state: tuple[str, ...] = ()
+    lane: str = "strict"
 
 
 class Lint:
@@ -131,6 +132,7 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     version = assigned_literal(tree, "CONTRACT_VERSION")
     dependencies = assigned_literal(tree, "SIBLING_DEPENDENCIES")
     owned_state = assigned_literal(tree, "OWNED_STATE")
+    lane = assigned_literal(tree, "LANE")
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
@@ -153,8 +155,13 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
         declaration = classes.get(class_name)
         if not declaration or not any(annotation_name(base) == "TypedDict" for base in declaration.bases):
             lint.add(path, f"{class_name} must be declared as a TypedDict")
+    if lane is None:
+        lane = "strict"
+    elif lane not in LANES:
+        lint.add(path, f"LANE must be one of {', '.join(sorted(LANES))}")
+        lane = "strict"
 
-    return Contract(version, dict(dependencies), tuple(owned_state))
+    return Contract(version, dict(dependencies), tuple(owned_state), lane)
 
 
 def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
@@ -343,6 +350,20 @@ def lint_smokes(brick: Path, *, top_level: bool, lint: Lint) -> None:
                 lint.add(path, "smoke test must use from bricks.<name> import run")
 
 
+def lint_strict(brick: Path, contract: Contract, lint: Lint) -> None:
+    """The regular lane. Every rule above already applies; this adds none."""
+
+
+# A lane is a declared enforcement class: the rules above plus the ones its
+# enforcer adds. A lane may only add rules, never relax one (AGENTS.md:
+# "may not relax a parent rule"), and it may not exist without an enforcer,
+# which is why the table maps each name to a function rather than listing
+# names. A contract with no LANE is in the strict lane.
+LANES = {
+    "strict": lint_strict,
+}
+
+
 def lint_brick(brick: Path, contract: Contract, *, top_level: bool, lint: Lint) -> None:
     for relative in REQUIRED:
         if not (brick / relative).exists():
@@ -353,6 +374,7 @@ def lint_brick(brick: Path, contract: Contract, *, top_level: bool, lint: Lint) 
     lint_python(brick, contract, lint)
     lint_records(brick, limits, lint)
     lint_smokes(brick, top_level=top_level, lint=lint)
+    LANES[contract.lane](brick, contract, lint)
 
 
 def lint_graph(
