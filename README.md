@@ -73,3 +73,11 @@ Check brick shape, import direction, public exports, and evidence limits with:
 ```sh
 python3 tools/lint_bricks.py
 ```
+
+Render the declared sibling-dependency graph as Mermaid with:
+
+```sh
+python3 tools/graph_bricks.py
+```
+
+Each node lists the state its brick owns. A solid arrow is an `orchestrated` dependency and a dashed arrow is an `eventual` one. Bricks that no sibling depends on are drawn with a thicker border; those are the top-level flows that may carry smoke tests.
