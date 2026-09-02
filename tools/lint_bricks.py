@@ -315,17 +315,17 @@ def lint_records(brick: Path, limits: dict[str, int], lint: Lint) -> None:
         read_json(path, lint)
 
 
-def lint_smokes(brick: Path, *, top_level: bool, lint: Lint) -> None:
+def lint_smokes(brick: Path, contract: Contract, lint: Lint) -> None:
     tests_dir = brick / "runner/tests"
     tests = sorted(tests_dir.glob("test_*.py")) if tests_dir.exists() else []
     if not tests:
         return
     if not (tests_dir / "__init__.py").is_file():
         lint.add(tests_dir / "__init__.py", "smoke-test package marker is missing")
-    if tests and not top_level:
-        lint.add(tests_dir, "smoke tests belong only to top-level flow bricks")
+    if contract.lane != "workflow":
+        lint.add(tests_dir, "smoke tests belong only to workflow bricks")
     if len(tests) > 3:
-        lint.add(tests_dir, "top-level flow may have at most three smoke-test files")
+        lint.add(tests_dir, "a workflow may have at most three smoke-test files")
     for path in tests:
         tree = lint.tree(path)
         if not tree:
@@ -398,13 +398,42 @@ def lint_pure(brick: Path, contract: Contract, lint: Lint) -> None:
 # "may not relax a parent rule"), and it may not exist without an enforcer,
 # which is why the table maps each name to a function rather than listing
 # names. A contract with no LANE is in the strict lane.
+def lint_workflow(brick: Path, contract: Contract, lint: Lint) -> None:
+    """A workflow is invoked as a whole operation, never imported for its parts.
+
+    Two consequences, one enforced here and one in the graph. Here: it is the
+    only kind of brick that may carry a process door, ``__main__.py``, and
+    that door may import nothing from the brick tree except the brick's own
+    ``run`` -- the same rule a sibling adapter lives under, applied to the
+    outside world. In the graph: no contract may list a workflow as a sibling
+    dependency. Smoke tests, which prove integration through ``run``, belong
+    only here; before lanes that was derived from the graph (a brick nothing
+    depended on) and now the brick says so.
+    """
+    door = lint.tree(brick / "__main__.py")
+    if not door:
+        return
+    own_run = {".", ".runner.run", f"bricks.{brick.name}"}
+    for node in ast.walk(door):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for module in imported_modules(node):
+            inside = module.startswith(".") or module.split(".")[0] == "bricks"
+            if not inside:
+                continue
+            names = [item.name for item in node.names]
+            if not (isinstance(node, ast.ImportFrom) and module in own_run and names == ["run"]):
+                lint.add(brick / "__main__.py", "__main__ may import only this brick's run")
+
+
 LANES = {
     "strict": lint_strict,
     "pure": lint_pure,
+    "workflow": lint_workflow,
 }
 
 
-def lint_brick(brick: Path, contract: Contract, *, top_level: bool, lint: Lint) -> None:
+def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
     for relative in REQUIRED:
         if not (brick / relative).exists():
             lint.add(brick / relative, "required brick path is missing")
@@ -413,15 +442,16 @@ def lint_brick(brick: Path, contract: Contract, *, top_level: bool, lint: Lint) 
     limits = {key: config_number(config, key, lint, config_path) for key in CONFIG_DEFAULTS}
     lint_python(brick, contract, lint)
     lint_records(brick, limits, lint)
-    lint_smokes(brick, top_level=top_level, lint=lint)
+    lint_smokes(brick, contract, lint)
+    if contract.lane != "workflow" and (brick / "__main__.py").exists():
+        lint.add(brick / "__main__.py", "only a workflow brick may have __main__.py")
     LANES[contract.lane](brick, contract, lint)
 
 
 def lint_graph(
     bricks: list[Path], contracts: dict[str, Contract], lint: Lint
-) -> set[str]:
+) -> None:
     names = set(contracts)
-    incoming: set[str] = set()
     owners: dict[str, str] = {}
     graph: dict[str, set[str]] = {name: set() for name in names}
 
@@ -432,8 +462,12 @@ def lint_graph(
             elif dependency not in names:
                 lint.add(next(brick for brick in bricks if brick.name == name) / "contract.py", f"unknown sibling dependency {dependency!r}")
             else:
+                if contracts[dependency].lane == "workflow":
+                    lint.add(
+                        next(brick for brick in bricks if brick.name == name) / "contract.py",
+                        f"sibling dependency {dependency!r} is a workflow brick; a workflow is invoked as a whole, not depended on",
+                    )
                 graph[name].add(dependency)
-                incoming.add(dependency)
         for resource in contract.owned_state:
             if resource in owners:
                 lint.add(
@@ -461,7 +495,6 @@ def lint_graph(
 
     for name in sorted(names):
         visit(name, ())
-    return names - incoming
 
 
 def lint_repo(root: Path) -> Lint:
@@ -483,14 +516,9 @@ def lint_repo(root: Path) -> Lint:
             if path.is_dir() and not path.name.startswith((".", "__"))
         )
         contracts = {brick.name: lint_contract(brick, lint) for brick in brick_paths}
-        top_level = lint_graph(brick_paths, contracts, lint)
+        lint_graph(brick_paths, contracts, lint)
         for brick in brick_paths:
-            lint_brick(
-                brick,
-                contracts[brick.name],
-                top_level=brick.name in top_level,
-                lint=lint,
-            )
+            lint_brick(brick, contracts[brick.name], lint)
     else:
         lint.add(bricks, "bricks directory is missing")
     return lint

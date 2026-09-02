@@ -177,5 +177,72 @@ class PureLaneTests(Fixture):
         self.assertClean()
 
 
+SMOKE = (
+    "import unittest\n\nfrom bricks.example_brick import run\n\n\n"
+    "class SmokeTest(unittest.TestCase):\n"
+    "    def test_run(self) -> None:\n"
+    "        with self.assertRaises(NotImplementedError):\n"
+    "            run({})\n"
+)
+
+
+class WorkflowLaneTests(Fixture):
+    def workflow_brick(self, name: str = "example_brick") -> Path:
+        brick = self.brick(name)
+        self.contract(brick, LANE='"workflow"')
+        return brick
+
+    def smoke(self, brick: Path) -> None:
+        tests = brick / "runner/tests"
+        tests.mkdir()
+        (tests / "__init__.py").write_text("", encoding="utf-8")
+        (tests / "test_smoke.py").write_text(SMOKE, encoding="utf-8")
+
+    def test_workflow_brick_lints_clean(self) -> None:
+        self.workflow_brick()
+        self.assertClean()
+
+    def test_nothing_may_depend_on_a_workflow(self) -> None:
+        self.workflow_brick("flow")
+        self.contract(self.brick("lib"), SIBLING_DEPENDENCIES='{"flow": "eventual"}')
+        self.assertError("bricks/lib/contract.py: sibling dependency 'flow' is a workflow brick")
+
+    def test_workflow_may_have_a_process_door(self) -> None:
+        brick = self.workflow_brick()
+        (brick / "__main__.py").write_text("from . import run\n\nrun({})\n", encoding="utf-8")
+        self.assertClean()
+
+    def test_process_door_may_name_the_brick_in_full(self) -> None:
+        brick = self.workflow_brick()
+        (brick / "__main__.py").write_text("from bricks.example_brick import run\n\nrun({})\n", encoding="utf-8")
+        self.assertClean()
+
+    def test_process_door_may_import_only_run(self) -> None:
+        brick = self.workflow_brick()
+        (brick / "__main__.py").write_text("from .src.logic import execute\n", encoding="utf-8")
+        self.assertError("__main__.py: __main__ may import only this brick's run")
+
+    def test_process_door_may_not_reach_a_sibling(self) -> None:
+        self.brick("other")
+        brick = self.workflow_brick()
+        (brick / "__main__.py").write_text("from bricks.other import run\n", encoding="utf-8")
+        self.assertError("__main__.py: __main__ may import only this brick's run")
+
+    def test_only_a_workflow_has_a_process_door(self) -> None:
+        brick = self.brick()
+        (brick / "__main__.py").write_text("from . import run\n", encoding="utf-8")
+        self.assertError("__main__.py: only a workflow brick may have __main__.py")
+
+    def test_smoke_tests_belong_to_workflows(self) -> None:
+        self.smoke(self.workflow_brick())
+        self.assertClean()
+
+    def test_strict_brick_may_not_carry_smoke_tests(self) -> None:
+        # Before lanes this was derived: a brick nothing depended on could carry
+        # them. Now the brick says so, or it cannot.
+        self.smoke(self.brick())
+        self.assertError("runner/tests: smoke tests belong only to workflow bricks")
+
+
 if __name__ == "__main__":
     unittest.main()
