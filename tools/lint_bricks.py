@@ -402,10 +402,11 @@ def lint_graph(
     return names - incoming
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    root = parser.parse_args().root.resolve()
+def lint_repo(root: Path) -> Lint:
+    """Lint every brick under ``root`` and return the findings without printing.
+
+    ``main`` is the command; this is the function a test calls on a fixture tree.
+    """
     lint = Lint(root)
     bricks = root / "bricks"
     for path in (root / "AGENTS.md", bricks / "AGENTS.md"):
@@ -430,6 +431,13 @@ def main() -> int:
             )
     else:
         lint.add(bricks, "bricks directory is missing")
+    return lint
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    lint = lint_repo(parser.parse_args().root.resolve())
     for item in lint.warnings:
         print(f"WARNING {item}")
     for item in lint.errors:
