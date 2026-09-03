@@ -25,8 +25,8 @@ This folder owns orchestration, brick-local run identity, run history, and smoke
 ## Tests
 
 - Smoke tests prove integration through the public brick boundary. Focused `src` tests prove domain correctness.
-- `runner/tests/` is optional and reserved for the repository's most top-level flows: bricks that no other brick depends on.
-- Do not add smoke tests to every brick. A top-level flow may have at most three smoke-test files, each defining an explicit input and calling only the brick's top-level `run`.
+- `runner/tests/` is optional and reserved for bricks that declare `LANE = "workflow"`: the flows invoked as a whole, which no other brick depends on.
+- Do not add smoke tests to every brick. A workflow may have at most three smoke-test files, each defining an explicit input and calling only the brick's top-level `run`.
 - Default tests use saved examples. A fresh test affects only its own brick; it never makes sibling runs fresh.
 - Use a save test only when deliberately replacing reviewed committed examples.
 - Focused tests under `src/tests/` are optional and may directly test private domain logic. Organize them only when the logic warrants it.
