@@ -5,6 +5,12 @@ from typing import TypedDict
 
 CONTRACT_VERSION = 1
 
+# The enforcement class this brick declares for itself: "strict" (the regular
+# brick), "pure" (output is a function of input alone), or "workflow" (invoked
+# as a whole, never depended on). A lane only adds rules. Omitting it means
+# "strict".
+LANE = "strict"
+
 # Map sibling brick names to "eventual" or "orchestrated".
 SIBLING_DEPENDENCIES: dict[str, str] = {}
 
