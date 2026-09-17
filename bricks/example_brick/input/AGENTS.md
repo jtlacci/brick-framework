@@ -23,8 +23,8 @@ This folder owns every external-source boundary and sibling-brick boundary for t
 
 - Store committed examples at `data/<adapter>/<case>.json`, using stable human-readable adapter and case names.
 - Default saved mode reads the named example and fails clearly if it is absent or its normalized request does not match. It never falls through to a live call.
-- `fresh=True` (the `--FRESH` run option) calls the real source and does not modify committed examples.
-- `save=True` (the `--SAVE` run option) implies a fresh call, redacts sensitive fields, checks size limits, and atomically replaces the named committed example.
+- `fresh=True` calls the real source and does not modify committed examples.
+- `save=True` implies a fresh call, redacts sensitive fields, checks size limits, and atomically replaces the named committed example.
 - A saved example contains `schema_version`, `contract_version`, `adapter`, `case`, `capture_run_id`, normalized `request`, and exactly one of `response` or `error`.
 - Refuse to replay an example captured under a different brick contract version.
 - Serialize JSON with sorted keys, two-space indentation, and a trailing newline. Do not store headers, credentials, cookies, tokens, or other secrets.

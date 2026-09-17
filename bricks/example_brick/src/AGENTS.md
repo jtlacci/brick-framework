@@ -9,7 +9,7 @@ This folder owns the brick's private domain logic. Its internal organization is 
 - Do not perform direct network, database, filesystem, subprocess, environment, clock, or sibling-brick calls. Those calls must go through adapters.
 - Do not import sibling bricks directly. Import only this brick's input adapters.
 - Libraries are allowed only when their use is local and does not make external calls.
-- Keep behavior deterministic for the same supplied inputs unless randomness is explicitly passed in.
+- Keep behavior deterministic for the same supplied inputs unless randomness is explicitly passed in. A brick that declares `LANE = "pure"` has the linter hold it to this: no clock calls, no `random` or `time`, no adapters at all.
 - Export functions only for use by this brick's `runner/`; the repository-internal brick entry point remains `run` alone.
 - Focused tests here prove domain rules and invariants. They are distinct from the few top-level smoke tests that prove integration.
 - Split the brick when unrelated domain responsibilities make this folder change together repeatedly.
