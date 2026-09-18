@@ -6,9 +6,9 @@ on:
   workflow_call:
     inputs:
       framework-ref:
-        description: framework revision whose host tools should validate the caller
+        description: immutable framework revision whose host tools should validate the caller
         type: string
-        default: main
+        required: true
 
 jobs:
   bend:

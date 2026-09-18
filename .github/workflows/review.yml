@@ -25,9 +25,9 @@ on:
   workflow_call:
     inputs:
       framework-ref:
-        description: the framework revision to review with
+        description: immutable framework revision to validate and review with
         type: string
-        default: main
+        required: true
     secrets:
       ANTHROPIC_API_KEY:
         required: false

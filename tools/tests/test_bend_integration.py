@@ -37,6 +37,17 @@ class ToolchainWorkflowTests(unittest.TestCase):
         for command in ("bend PROOF.bend", 'bend "$entry" --checkup', "tools/lint_bricks.py"):
             self.assertIn(command, text[validation:key_gate])
 
+    def test_reusable_workflows_require_an_immutable_framework_ref(self) -> None:
+        for name in ("validate.yml", "review.yml"):
+            text = self.workflow(name)
+            declaration = re.search(
+                r"framework-ref:\n(?P<body>(?:        .+\n)+)", text
+            )
+            self.assertIsNotNone(declaration)
+            body = declaration.group("body")
+            self.assertIn("required: true", body)
+            self.assertNotIn("default:", body)
+
 
 class BendIntegrationTests(unittest.TestCase):
     @classmethod

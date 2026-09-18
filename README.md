@@ -58,7 +58,7 @@ Using `IO` uniformly keeps pure and effectful bricks composable. Pure bricks ret
 
 ## Laws and proofs
 
-Each brick owns a `laws.bend` human specification and a paired `proof.bend`. Root `LAWS.bend` and `PROOF.bend` aggregate every brick, and the linter rejects an unaggregated claim or proof. Do not weaken a law to make a proof pass.
+Each brick owns a `laws.bend` human specification and a paired `proof.bend`. Root `LAWS.bend` and `PROOF.bend` aggregate every brick, and the linter rejects an unaggregated claim or proof. The linter enforces custody, not specification quality: reviewers still decide whether the laws are sufficient, while Bend decides whether every stated law is proved. Do not weaken a law to make a proof pass.
 
 After editing Bend code, run:
 
@@ -98,6 +98,8 @@ python3 -m unittest discover -s tools/tests -t . -v
 ```
 
 The linter checks shape, contract literals, import direction, public entry signatures, lane rules, ownership, and graph cycles. The graph command renders declared dependencies as Mermaid. The Python review client remains the transport for the optional model-assisted pull-request review.
+
+Both reusable workflows require `framework-ref`. Pin the workflow `uses:` reference and `framework-ref` to the same immutable commit SHA so validation and review cannot drift onto different framework revisions.
 
 ## Pinned Bend toolchain
 
