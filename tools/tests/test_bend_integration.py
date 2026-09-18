@@ -24,6 +24,7 @@ class ToolchainWorkflowTests(unittest.TestCase):
         for name in ("validate.yml", "review.yml"):
             text = self.workflow(name)
             self.assertIn(f'BEND_VERSION: "{PINNED_BEND}"', text)
+            self.assertNotIn("runner.temp", text)
             self.assertNotIn("install.sh", text)
             matches = re.findall(r'BEND_SHA256: "([0-9a-f]{64})"', text)
             self.assertEqual(len(matches), 1)

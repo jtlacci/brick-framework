@@ -36,7 +36,6 @@ jobs:
   review:
     runs-on: ubuntu-latest
     env:
-      BEND_HOME: ${{ runner.temp }}/bend
       BEND_VERSION: "2.0.5"
       BEND_SHA256: "4db70e77ce1b1027f1d0e15dee025921fa794a9b415add4350ec7c64acf2775b"
       BEND_NO_TELEMETRY: "1"
@@ -74,12 +73,13 @@ jobs:
 
       - name: install pinned Bend
         run: |
+          bend_home="$RUNNER_TEMP/bend"
           archive="$RUNNER_TEMP/bend-${BEND_VERSION}.tar.gz"
           curl -fsSL "https://bend-lang.com/dl/${BEND_VERSION}.tar.gz" -o "$archive"
           echo "${BEND_SHA256}  ${archive}" | sha256sum --check -
-          mkdir -p "$BEND_HOME" "$RUNNER_TEMP/bend-bin"
-          tar -xzf "$archive" -C "$BEND_HOME"
-          echo "BEND_ENTRY=$BEND_HOME/bend2/main.ts" >> "$GITHUB_ENV"
+          mkdir -p "$bend_home" "$RUNNER_TEMP/bend-bin"
+          tar -xzf "$archive" -C "$bend_home"
+          echo "BEND_ENTRY=$bend_home/bend2/main.ts" >> "$GITHUB_ENV"
           printf '%s\n' '#!/usr/bin/env sh' 'exec bun "$BEND_ENTRY" "$@"' > "$RUNNER_TEMP/bend-bin/bend"
           chmod +x "$RUNNER_TEMP/bend-bin/bend"
           echo "$RUNNER_TEMP/bend-bin" >> "$GITHUB_PATH"
