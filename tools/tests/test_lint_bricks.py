@@ -23,6 +23,8 @@ class Fixture(unittest.TestCase):
         )
         (self.root / "bricks").mkdir()
         shutil.copy(ROOT / "bricks/AGENTS.md", self.root / "bricks/AGENTS.md")
+        (self.root / "workflows").mkdir()
+        shutil.copy(ROOT / "workflows/AGENTS.md", self.root / "workflows/AGENTS.md")
 
     def brick(self, name: str = "example_brick") -> Path:
         target = self.root / "bricks" / name
@@ -32,13 +34,27 @@ class Fixture(unittest.TestCase):
 
     def sync_aggregators(self) -> None:
         names = sorted(path.name for path in (self.root / "bricks").iterdir() if path.is_dir())
+        workflow_names = sorted(
+            path.name for path in (self.root / "workflows").iterdir() if path.is_dir()
+        )
         laws = ["# Test root law aggregation.", "import Base"]
         proofs = ["# Test root proof aggregation.", "import Base", "import ./LAWS.bend as Laws"]
         for index, name in enumerate(names):
             laws.append(f"import ./bricks/{name}/laws.bend as Brick{index}Laws")
             proofs.append(f"import ./bricks/{name}/proof.bend as Brick{index}Proof")
+        for index, name in enumerate(workflow_names):
+            laws.append(f"import ./workflows/{name}/laws.bend as Workflow{index}Laws")
+            proofs.append(f"import ./workflows/{name}/proof.bend as Workflow{index}Proof")
         (self.root / "LAWS.bend").write_text("\n".join(laws) + "\n", encoding="utf-8")
         (self.root / "PROOF.bend").write_text("\n".join(proofs) + "\n", encoding="utf-8")
+
+    def workflow(self, name: str = "double_value") -> Path:
+        if not (self.root / "bricks/example_brick").exists():
+            self.brick()
+        target = self.root / "workflows" / name
+        shutil.copytree(ROOT / "workflows/double_value", target)
+        self.sync_aggregators()
+        return target
 
     def definition(self, brick: Path, name: str, body: str) -> None:
         path = brick / "contract.bend"
@@ -145,7 +161,7 @@ class BoilerplateTests(Fixture):
 
 class ContractTests(Fixture):
     def test_every_lane_has_an_enforcer(self) -> None:
-        self.assertEqual(set(lint_bricks.LANES), {"strict", "pure", "workflow"})
+        self.assertEqual(set(lint_bricks.LANES), {"strict", "pure"})
         self.assertTrue(all(callable(item) for item in lint_bricks.LANES.values()))
 
     def test_version_must_be_positive_literal(self) -> None:
@@ -154,7 +170,11 @@ class ContractTests(Fixture):
 
     def test_lane_must_be_literal_constructor(self) -> None:
         self.definition(self.brick(), "lane", "choose_lane()")
-        self.assertError("lane must return Strict{}, Pure{}, or Workflow{} literally")
+        self.assertError("lane must return Strict{} or Pure{} literally")
+
+    def test_workflow_is_not_a_brick_lane(self) -> None:
+        self.lane(self.brick(), "Workflow")
+        self.assertError("lane must return Strict{} or Pure{} literally")
 
     def test_dependencies_must_be_literal(self) -> None:
         self.dependencies(self.brick(), "load_dependencies()")
@@ -264,13 +284,14 @@ class GraphTests(Fixture):
             "  Sibling.run(input)\n", encoding="utf-8"
         )
 
-    def test_nothing_may_depend_on_workflow(self) -> None:
-        flow = self.brick("flow")
+    def test_brick_may_not_import_workflow(self) -> None:
         owner = self.brick("owner")
-        self.lane(flow, "Workflow")
-        self.dependencies(owner, '[Dependency{"flow", Orchestrated{}}]')
-        self.sibling(owner, "flow")
-        self.assertError("sibling dependency 'flow' is a workflow brick")
+        self.workflow()
+        (owner / "src/coupled.bend").write_text(
+            "import ../../../workflows/double_value/main.bend as Workflow\n",
+            encoding="utf-8",
+        )
+        self.assertError("brick may not import a workflow")
 
 
 class PureLaneTests(Fixture):
@@ -296,33 +317,93 @@ class PureLaneTests(Fixture):
         self.assertError("pure brick may not declare sibling dependencies")
 
 
-class WorkflowLaneTests(Fixture):
-    def workflow(self) -> Path:
-        brick = self.brick()
-        self.lane(brick, "Workflow")
-        return brick
-
-    def test_workflow_app_lints_clean(self) -> None:
-        brick = self.workflow()
-        (brick / "app.bend").write_text(
-            "import Base\nimport ./main.bend as Brick\n\ndef main() -> IO(Unit):\n  IO.print(\"ok\")\n",
-            encoding="utf-8",
-        )
+class WorkflowTests(Fixture):
+    def test_workflow_lints_clean(self) -> None:
+        self.workflow()
         self.assertClean()
 
-    def test_only_workflow_may_have_app(self) -> None:
+    def test_brick_may_not_have_app(self) -> None:
         brick = self.brick()
         (brick / "app.bend").write_text("import Base\ndef main() -> IO(Unit):\n  IO.print(\"x\")\n")
-        self.assertError("only a workflow brick may have app.bend")
+        self.assertError("app.bend belongs in a workflow")
 
-    def test_smoke_programs_belong_to_workflow(self) -> None:
+    def test_brick_may_not_have_whole_use_case_smokes(self) -> None:
         brick = self.brick()
         tests = brick / "runner/tests"
         tests.mkdir()
         (tests / "smoke.bend").write_text(
             "import Base\nimport ../../main.bend as Brick\ndef main() -> IO(Unit):\n  IO.print(\"ok\")\n"
         )
-        self.assertError("smoke programs belong only to workflow bricks")
+        self.assertError("whole-use-case smoke programs belong in workflows")
+
+    def test_workflow_dependency_must_be_literal(self) -> None:
+        workflow = self.workflow()
+        path = workflow / "contract.bend"
+        path.write_text(
+            path.read_text().replace(
+                '[BrickDependency{"example_brick"}]', "load_dependencies()"
+            ),
+            encoding="utf-8",
+        )
+        self.assertError("brick_dependencies must be a literal list")
+
+    def test_root_must_aggregate_workflow_law_and_proof(self) -> None:
+        self.workflow()
+        (self.root / "LAWS.bend").write_text("import Base\n", encoding="utf-8")
+        (self.root / "PROOF.bend").write_text(
+            "import Base\nimport ./LAWS.bend as Laws\n", encoding="utf-8"
+        )
+        self.assertError("must aggregate workflows/double_value/laws.bend")
+        self.assertError("must aggregate workflows/double_value/proof.bend")
+
+    def test_workflow_declared_and_imported_bricks_must_match(self) -> None:
+        workflow = self.workflow()
+        path = workflow / "contract.bend"
+        path.write_text(
+            path.read_text().replace("example_brick", "missing_brick"),
+            encoding="utf-8",
+        )
+        self.assertError("unknown brick dependency 'missing_brick'")
+        self.assertError("brick dependency 'example_brick' is not declared")
+
+    def test_workflow_may_not_perform_direct_effect(self) -> None:
+        workflow = self.workflow()
+        path = workflow / "flow.bend"
+        path.write_text(path.read_text() + '\ndef bad() -> IO(Unit):\n  IO.print("bad")\n')
+        self.assertError("workflow may not perform a direct effect; use a brick")
+
+    def test_workflow_may_not_import_another_workflow(self) -> None:
+        workflow = self.workflow()
+        other = self.root / "workflows/other"
+        shutil.copytree(ROOT / "workflows/double_value", other)
+        self.sync_aggregators()
+        path = workflow / "flow.bend"
+        path.write_text(
+            path.read_text() + "\nimport ../other/main.bend as Other\n",
+            encoding="utf-8",
+        )
+        self.assertError("workflow may not import another workflow")
+
+    def test_workflow_may_not_import_brick_internals(self) -> None:
+        workflow = self.workflow()
+        path = workflow / "flow.bend"
+        path.write_text(
+            path.read_text()
+            + "\nimport ../../bricks/example_brick/runner/run.bend as Internal\n",
+            encoding="utf-8",
+        )
+        self.assertError("workflow may import only brick main.bend and contract.bend")
+
+    def test_workflow_smoke_uses_only_public_boundary(self) -> None:
+        workflow = self.workflow()
+        path = workflow / "tests/smoke.bend"
+        path.write_text(path.read_text() + "\nimport ../flow.bend as Flow\n", encoding="utf-8")
+        self.assertError("smoke program may import only Base")
+
+    def test_workflow_requires_a_smoke(self) -> None:
+        workflow = self.workflow()
+        (workflow / "tests/smoke.bend").unlink()
+        self.assertError("workflow must have one to three Bend smoke programs")
 
 
 if __name__ == "__main__":

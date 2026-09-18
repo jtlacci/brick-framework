@@ -39,6 +39,13 @@ class ToolchainWorkflowTests(unittest.TestCase):
         for command in ("bend PROOF.bend", 'bend "$entry" --checkup', "tools/lint_bricks.py"):
             self.assertIn(command, text[validation:key_gate])
 
+    def test_ci_checks_workflow_entries_and_smokes(self) -> None:
+        for name in ("validate.yml", "review.yml"):
+            text = self.workflow(name)
+            self.assertIn("find workflows -mindepth 2 -maxdepth 2 -name main.bend", text)
+            self.assertIn("find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend'", text)
+            self.assertIn('bend "$smoke"', text)
+
     def test_reusable_workflows_require_an_immutable_framework_ref(self) -> None:
         for name in ("validate.yml", "review.yml"):
             text = self.workflow(name)
@@ -86,7 +93,7 @@ class BendIntegrationTests(unittest.TestCase):
     def test_pinned_compiler_version(self) -> None:
         self.assertEqual(self.assert_bend_ok("--version"), f"bend {PINNED_BEND}")
 
-    def test_root_proof_checks_every_brick(self) -> None:
+    def test_root_proof_checks_every_brick_and_workflow(self) -> None:
         self.assertEqual(self.assert_bend_ok("PROOF.bend"), "All terms check.")
 
     def test_root_proof_rejects_an_invalid_brick_proof(self) -> None:
@@ -97,7 +104,7 @@ class BendIntegrationTests(unittest.TestCase):
                 copy,
                 ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
             )
-            proof = copy / "bricks/double_brick/proof.bend"
+            proof = copy / "workflows/double_value/proof.bend"
             valid = proof.read_text(encoding="utf-8")
             invalid = valid.replace("  {==}\n", "  Unit{}\n", 1)
             self.assertNotEqual(invalid, valid)
@@ -109,13 +116,41 @@ class BendIntegrationTests(unittest.TestCase):
 
     def test_every_public_entry_checks_with_its_imports(self) -> None:
         entries = sorted((ROOT / "bricks").glob("*/main.bend"))
+        entries += sorted((ROOT / "workflows").glob("*/main.bend"))
         self.assertTrue(entries)
         for entry in entries:
             with self.subTest(entry=entry.relative_to(ROOT)):
                 output = self.assert_bend_ok(str(entry.relative_to(ROOT)), "--checkup")
                 self.assertIn("All terms check.", output)
 
-    def test_public_composition_executes_across_the_adapter(self) -> None:
+    def test_workflow_smoke_executes_the_whole_use_case(self) -> None:
+        smokes = sorted((ROOT / "workflows").glob("*/tests/*.bend"))
+        self.assertTrue(smokes)
+        for smoke in smokes:
+            with self.subTest(smoke=smoke.relative_to(ROOT)):
+                self.assertEqual(self.assert_bend_ok(str(smoke.relative_to(ROOT))), "42")
+
+    def test_workflow_smoke_fails_on_a_wrong_expected_result(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="bend-smoke-gate-") as directory:
+            copy = Path(directory) / "repo"
+            shutil.copytree(
+                ROOT,
+                copy,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            )
+            smoke = copy / "workflows/double_value/tests/smoke.bend"
+            valid = smoke.read_text(encoding="utf-8")
+            invalid = valid.replace("U32.is_eq(value, 42)", "U32.is_eq(value, 41)")
+            self.assertNotEqual(invalid, valid)
+            smoke.write_text(invalid, encoding="utf-8")
+
+            result = self.bend_run(
+                "workflows/double_value/tests/smoke.bend", cwd=copy
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("expected workflow output 42", result.stderr)
+
+    def test_public_composition_executes_through_the_workflow(self) -> None:
         self.assertEqual(self.assert_bend_ok("example.bend"), "42")
 
 

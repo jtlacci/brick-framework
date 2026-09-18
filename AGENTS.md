@@ -1,12 +1,12 @@
 # Repository contract
 
-This repository uses Bend 2 file boilerplate to organize one codebase as discrete domain bricks. Python is host-side repository tooling only; brick behavior belongs in `.bend` files.
+This repository uses Bend 2 file boilerplate to organize one codebase as domain bricks composed by application workflows. Python is host-side repository tooling only; runtime behavior belongs in `.bend` files.
 
 ## Before editing Bend
 
 - Run `bend guide` and use the installed compiler as the syntax authority.
 - Read the closest inherited `AGENTS.md` files.
-- Keep each brick's human intent in its `laws.bend` and its implementations in `proof.bend`; keep root `LAWS.bend` and `PROOF.bend` complete as aggregators.
+- Keep each brick and workflow's human intent in its `laws.bend` and its implementations in `proof.bend`; keep root `LAWS.bend` and `PROOF.bend` complete as aggregators.
 - Run `bend PROOF.bend` after every behavior change and before committing.
 - Use Bend parallel calls only for independent, balanced work.
 
@@ -16,6 +16,7 @@ This repository uses Bend 2 file boilerplate to organize one codebase as discret
 - A **brick boundary** separates one brick from its sibling bricks.
 - A **brick entry point** is `run` in the brick's `main.bend`.
 - A **sibling adapter** imports another brick's `contract.bend` for boundary types and `main.bend` for execution, then calls only `run`.
+- A **workflow** is one application use case that translates values and sequences declared brick `run` calls without owning infrastructure or domain behavior.
 
 ## Non-negotiable rules
 
@@ -27,7 +28,9 @@ This repository uses Bend 2 file boilerplate to organize one codebase as discret
 - Every sibling dependency declares `Eventual{}` or `Orchestrated{}` consistency. Dependency cycles are forbidden.
 - Every persistent application-state resource has exactly one owning brick.
 - Bricks are repository-internal. Do not package or expose them to outside consumers.
-- State important invariants as brick-owned Bend laws and keep the root proof aggregation complete.
+- Put each application use case under `workflows/`; retain one typed input, one typed output, and one public `run`.
+- Workflows may depend only on brick public contracts and entries. They perform no direct external effects and do not call other workflows.
+- State important invariants as package-owned Bend laws and keep the root proof aggregation complete.
 - Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
 
 ## Contract placement and precedence

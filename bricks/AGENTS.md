@@ -24,7 +24,7 @@ Each direct child of `bricks/` is one domain brick. Parent repository rules appl
 ## Boundaries
 
 - `main.bend` is the sole sibling-call surface. It imports `contract.bend` and `runner/run.bend`, defines only `run`, and returns `IO(BrickOutput)`.
-- `contract.bend` declares `BrickInput`, `BrickOutput`, `Lane`, `Consistency`, `Dependency`, and literal `contract_version`, `lane`, `sibling_dependencies`, and `owned_state` definitions.
+- `contract.bend` declares `BrickInput`, `BrickOutput`, `Lane` (`Strict{}` or `Pure{}`), `Consistency`, `Dependency`, and literal `contract_version`, `lane`, `sibling_dependencies`, and `owned_state` definitions.
 - `input/` owns typed configuration plus every external-source and sibling adapter.
 - `runner/` creates brick-local context and hands execution to private logic. Runner-owned effects such as clock access stay here; adapter effects are requested by `src/`.
 - `src/` owns private domain logic and may call only its own adapters for effects.
@@ -36,4 +36,4 @@ Each direct child of `bricks/` is one domain brick. Parent repository rules appl
 
 ## Laws
 
-Add non-negotiable behavior to the brick's `laws.bend` and fill it in that brick's `proof.bend`. The root `LAWS.bend` and `PROOF.bend` aggregate every brick so one command checks the repository. Prefer laws over pure functions at the `src/` or adapter-normalization boundary. Never weaken a law to accommodate an implementation.
+Add non-negotiable behavior to the brick's `laws.bend` and fill it in that brick's `proof.bend`. The root `LAWS.bend` and `PROOF.bend` aggregate every brick and workflow so one command checks the repository. Prefer laws over pure functions at the `src/` or adapter-normalization boundary. Never weaken a law to accommodate an implementation.

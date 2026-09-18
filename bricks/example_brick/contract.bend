@@ -4,7 +4,6 @@ import Base
 type Lane is Data:
   Strict{}
   Pure{}
-  Workflow{}
 
 type Consistency is Data:
   Eventual{}

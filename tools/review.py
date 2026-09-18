@@ -2,18 +2,18 @@
 """Judge one pull request's diff, one lane at a time.
 
 `tools/lint_bricks.py` decides everything an integer can decide. This is the
-other half of a lane: a language model reads the diff a lane claims and
+other half of a review profile: a language model reads the diff it claims and
 raises findings about what a parser cannot see -- whether an adapter really
-translates, whether a `pure` brick has a hidden input, whether a workflow's
-runner computes instead of composes. `review/<lane>.md` states each lane's
+translates, whether a `pure` brick has a hidden input, or whether a workflow
+computes domain behavior instead of composing bricks. `review/<lane>.md` states each profile's
 criteria and is the authority; this file is plumbing. It decides which lane
 sees which paths, hands each lane exactly the context its prompt describes,
 and turns the verdict into an exit code.
 
-ROUTING IS DERIVED, NOT DECLARED. A path's brick is `bricks/<name>/` and the
+ROUTING IS DERIVED, NOT DECLARED. A brick path is `bricks/<name>/` and the
 brick's lane is the literal returned by `lane()` in its `contract.bend`, parsed
-and never imported. Paths
-outside `bricks/` are printed as NOT REVIEWED rather than passing quietly.
+and never imported. Every `workflows/<name>/` path uses the workflow profile.
+Other paths are printed as NOT REVIEWED rather than passing quietly.
 
 THE REVIEWED TREE IS NOT THIS TREE. This file lives in the framework and
 judges a repository built on it: the current directory, or `REVIEW_ROOT`.
@@ -59,7 +59,7 @@ PROMPTS = "review"
 COMMON_PROMPT = "common.md"
 # The default lane: what a brick is when its contract declares nothing.
 STRICT = "strict"
-CONTEXT_DOCS = ("AGENTS.md", "bricks/AGENTS.md")
+CONTEXT_DOCS = ("AGENTS.md", "bricks/AGENTS.md", "workflows/AGENTS.md")
 
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 64_000
@@ -106,6 +106,14 @@ def brick_of(path: str) -> str | None:
     """The brick a repository path belongs to, or None for everything else."""
     parts = path.split("/")
     if len(parts) >= 3 and parts[0] == "bricks":
+        return parts[1]
+    return None
+
+
+def workflow_of(path: str) -> str | None:
+    """The workflow a repository path belongs to, or None for everything else."""
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[0] == "workflows":
         return parts[1]
     return None
 
@@ -159,6 +167,9 @@ def route(root: Path, files: list[str]) -> tuple[dict[str, list[str]], list[str]
     unrouted: list[str] = []
     known: dict[str, str] = {}
     for path in files:
+        if workflow_of(path) is not None:
+            by_lane["workflow"].append(path)
+            continue
         brick = brick_of(path)
         if brick is None:
             unrouted.append(path)
@@ -170,14 +181,17 @@ def route(root: Path, files: list[str]) -> tuple[dict[str, list[str]], list[str]
 
 
 def brick_docs(root: Path, files: list[str]) -> list[Path]:
-    """The AGENTS.md chain below `bricks/` for every brick a lane's files
-    touch: the brick's own, if any, and its input/runner/src contracts."""
+    """Nested contract docs for every brick or workflow touched."""
     found: list[Path] = []
     for brick in sorted({b for b in map(brick_of, files) if b}):
         for name in ("AGENTS.md", "input/AGENTS.md", "runner/AGENTS.md", "src/AGENTS.md"):
             path = root / "bricks" / brick / name
             if path.is_file():
                 found.append(path)
+    for workflow in sorted({w for w in map(workflow_of, files) if w}):
+        path = root / "workflows" / workflow / "AGENTS.md"
+        if path.is_file():
+            found.append(path)
     return found
 
 

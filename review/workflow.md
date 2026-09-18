@@ -1,17 +1,19 @@
-# The workflow lane
+# The workflow profile
 
-Everything in the strict lane applies. A workflow is invoked as a whole and never depended on; the linter has confined `app.bend` and smoke programs to this lane. You judge whether the brick remains composition rather than becoming a domain in disguise.
+A workflow is an application use case invoked as a whole. The linter has already checked its single typed entry, declared brick dependencies, import boundary, direct-effect ban, laws, proofs, and smoke-program shape. You judge whether it remains composition rather than becoming a domain brick in disguise.
 
 ## What to judge
 
-Criteria 1–8 of the strict lane, then:
+Apply the semantic parts of criteria 1–8 from the strict profile, then:
 
-9. **The runner composes; it does not compute.** `runner/run.bend` and `app.bend` create context, sequence calls, and return or present the result. A domain decision, calculation, retry rule, or data transformation in either belongs in `src/` or an adapter-normalization function. Block.
+9. **Composition only.** `flow.bend` sequences declared brick `run` calls and translates their typed values; it does not accumulate domain rules that belong in a brick.
 
-10. **Orchestration is real.** A workflow is where `Orchestrated{}` dependencies are honored. Adding one without sequencing, or leaving a partial failure with neither compensation nor an explicit invariant explaining why compensation is unnecessary, blocks.
+10. **Whole-operation contract.** `WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a generic command dispatcher.
 
-11. **Smoke programs use the public door.** A smoke program defines explicit input, imports only the brick's `main.bend`, executes `run`, and fails observably on a wrong result. Reaching into `src/`, patching an adapter, or importing a sibling makes it a focused check in the wrong folder. Advisory unless it also violates a blocking boundary.
+11. **Capability isolation.** Infrastructure and external behavior remain owned by bricks. The workflow does not disguise an effect in a helper.
+
+12. **Smoke value.** Each smoke program exercises the public `run` boundary and a meaningful whole-use-case outcome. It does not merely compile or print a constant.
 
 ## Severity
 
-Criteria **9 and 10 block**. Criterion 11 is advisory unless it exposes a blocking strict-lane defect. The strict lane severities stand for criteria 1–8.
+Criteria **9–11 block**. Criterion 12 is advisory unless it exposes a blocking defect. The strict-profile severities stand for criteria 1–8.

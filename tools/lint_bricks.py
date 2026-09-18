@@ -23,7 +23,15 @@ REQUIRED = (
     "runner/run.bend",
     "src/AGENTS.md",
 )
-LANE_CTORS = {"Strict": "strict", "Pure": "pure", "Workflow": "workflow"}
+WORKFLOW_REQUIRED = (
+    "main.bend",
+    "contract.bend",
+    "flow.bend",
+    "laws.bend",
+    "proof.bend",
+    "tests",
+)
+LANE_CTORS = {"Strict": "strict", "Pure": "pure"}
 CONSISTENCY_CTORS = {"Eventual": "eventual", "Orchestrated": "orchestrated"}
 IMPORT_RE = re.compile(r"(?m)^\s*import\s+([^\s#]+)(?:\s+as\s+([A-Za-z][\w.]*))?\s*(?:#.*)?$")
 DEF_RE = re.compile(r"(?m)^def\s+([A-Za-z][\w.]*)\s*\(")
@@ -41,6 +49,12 @@ class Contract:
     dependencies: dict[str, str] = field(default_factory=dict)
     owned_state: tuple[str, ...] = ()
     lane: str = "strict"
+
+
+@dataclass
+class WorkflowContract:
+    version: int = 0
+    dependencies: tuple[str, ...] = ()
 
 
 class Lint:
@@ -113,6 +127,21 @@ def parse_dependencies(body: str | None) -> dict[str, str] | None:
     return {name: CONSISTENCY_CTORS[ctor] for name, ctor in items}
 
 
+def parse_workflow_dependencies(body: str | None) -> tuple[str, ...] | None:
+    if body is None:
+        return None
+    compact = re.sub(r"\s+", "", body)
+    if compact == "[]":
+        return ()
+    if not (compact.startswith("[") and compact.endswith("]")):
+        return None
+    names = re.findall(r'BrickDependency\{"([a-z][a-z0-9_]*)"\}', compact)
+    rebuilt = "[" + ",".join(f'BrickDependency{{"{name}"}}' for name in names) + "]"
+    if rebuilt != compact or len(set(names)) != len(names):
+        return None
+    return tuple(names)
+
+
 def lint_contract(brick: Path, lint: Lint) -> Contract:
     path = brick / "contract.bend"
     text = strip_comments(lint.text(path)) if path.is_file() else ""
@@ -126,10 +155,10 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
         lint.add(path, "contract_version must return a positive U32 literal")
 
     lane_body = def_body(text, "lane")
-    lane_match = re.fullmatch(r"(Strict|Pure|Workflow)\{\}", lane_body or "")
+    lane_match = re.fullmatch(r"(Strict|Pure)\{\}", lane_body or "")
     lane = LANE_CTORS[lane_match.group(1)] if lane_match else "strict"
     if not lane_match:
-        lint.add(path, "lane must return Strict{}, Pure{}, or Workflow{} literally")
+        lint.add(path, "lane must return Strict{} or Pure{} literally")
 
     dependencies = parse_dependencies(def_body(text, "sibling_dependencies"))
     if dependencies is None:
@@ -147,6 +176,28 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
         owned_state = tuple(owned_value)
 
     return Contract(version, dependencies, owned_state, lane)
+
+
+def lint_workflow_contract(workflow: Path, lint: Lint) -> WorkflowContract:
+    path = workflow / "contract.bend"
+    text = strip_comments(lint.text(path)) if path.is_file() else ""
+    for type_name in ("BrickDependency", "WorkflowInput", "WorkflowOutput"):
+        if not re.search(rf"(?m)^type\s+{type_name}\b[^\n]*\bis\s+(?:Data|Type):\s*$", text):
+            lint.add(path, f"must declare typed {type_name}")
+
+    version_body = def_body(text, "contract_version")
+    version = int(version_body) if version_body and version_body.isdigit() else 0
+    if version < 1:
+        lint.add(path, "contract_version must return a positive U32 literal")
+
+    dependencies = parse_workflow_dependencies(def_body(text, "brick_dependencies"))
+    if dependencies is None:
+        lint.add(
+            path,
+            'brick_dependencies must be a literal list of BrickDependency{"name"}',
+        )
+        dependencies = ()
+    return WorkflowContract(version, dependencies)
 
 
 def bend_imports(path: Path, lint: Lint) -> list[tuple[str, str | None]]:
@@ -191,6 +242,7 @@ def lint_sources(brick: Path, contract: Contract, lint: Lint) -> set[str]:
     actual_dependencies: set[str] = set()
     root = lint.root.resolve()
     bricks_root = (lint.root / "bricks").resolve()
+    workflows_root = (lint.root / "workflows").resolve()
 
     for path in sorted(brick.rglob("*.bend")):
         text = strip_comments(lint.text(path))
@@ -256,6 +308,14 @@ def lint_sources(brick: Path, contract: Contract, lint: Lint) -> set[str]:
                     continue
 
             try:
+                target.relative_to(workflows_root)
+            except ValueError:
+                pass
+            else:
+                lint.add(path, "brick may not import a workflow")
+                continue
+
+            try:
                 local_parts = target.relative_to(brick.resolve()).parts
             except ValueError:
                 local_parts = ()
@@ -287,23 +347,6 @@ def lint_runner(brick: Path, lint: Lint) -> None:
         lint.add(path, "runner run must use the contract input and IO output types")
 
 
-def lint_smokes(brick: Path, contract: Contract, lint: Lint) -> None:
-    tests = sorted((brick / "runner/tests").glob("*.bend"))
-    if not tests:
-        return
-    if contract.lane != "workflow":
-        lint.add(brick / "runner/tests", "smoke programs belong only to workflow bricks")
-    if len(tests) > 3:
-        lint.add(brick / "runner/tests", "a workflow may have at most three smoke programs")
-    for path in tests:
-        text = strip_comments(lint.text(path))
-        if not re.search(r"(?m)^def\s+main\s*\(", text):
-            lint.add(path, "smoke program must define main")
-        imports = [specifier for specifier, _ in IMPORT_RE.findall(text) if specifier != "Base"]
-        if imports != ["../../main.bend"]:
-            lint.add(path, "smoke program may import only ../../main.bend besides Base")
-
-
 def lint_strict(brick: Path, contract: Contract, lint: Lint) -> None:
     """The regular lane adds no rules beyond the shared boundary."""
 
@@ -319,19 +362,7 @@ def lint_pure(brick: Path, contract: Contract, lint: Lint) -> None:
             lint.add(path, "pure brick may not perform effects")
 
 
-def lint_workflow(brick: Path, contract: Contract, lint: Lint) -> None:
-    app = brick / "app.bend"
-    if not app.exists():
-        return
-    text = strip_comments(lint.text(app))
-    imports = [specifier for specifier, _ in IMPORT_RE.findall(text) if specifier != "Base"]
-    if imports != ["./main.bend"]:
-        lint.add(app, "app.bend may import only ./main.bend besides Base")
-    if not re.search(r"(?m)^def\s+main\s*\(", text):
-        lint.add(app, "app.bend must define the workflow process main")
-
-
-LANES = {"strict": lint_strict, "pure": lint_pure, "workflow": lint_workflow}
+LANES = {"strict": lint_strict, "pure": lint_pure}
 
 
 def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
@@ -343,14 +374,15 @@ def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
     lint_entry(brick, lint)
     lint_runner(brick, lint)
     lint_sources(brick, contract, lint)
-    lint_smokes(brick, contract, lint)
-    if contract.lane != "workflow" and (brick / "app.bend").exists():
-        lint.add(brick / "app.bend", "only a workflow brick may have app.bend")
+    if (brick / "app.bend").exists():
+        lint.add(brick / "app.bend", "app.bend belongs in a workflow, not a brick")
+    if (brick / "runner/tests").exists():
+        lint.add(brick / "runner/tests", "whole-use-case smoke programs belong in workflows")
     LANES[contract.lane](brick, contract, lint)
 
 
-def lint_law_custody(bricks: list[Path], lint: Lint) -> None:
-    """Require brick-owned claims/proofs and complete root aggregation."""
+def lint_law_custody(packages: list[Path], lint: Lint) -> None:
+    """Require package-owned claims/proofs and complete root aggregation."""
     root_laws = lint.root / "LAWS.bend"
     root_proof = lint.root / "PROOF.bend"
 
@@ -369,15 +401,16 @@ def lint_law_custody(bricks: list[Path], lint: Lint) -> None:
     if root_laws.resolve() not in proof_targets:
         lint.add(root_proof, "must import ./LAWS.bend")
 
-    for brick in bricks:
-        laws = (brick / "laws.bend").resolve()
-        proof = (brick / "proof.bend").resolve()
+    for package in packages:
+        laws = (package / "laws.bend").resolve()
+        proof = (package / "proof.bend").resolve()
+        relative = package.relative_to(lint.root).as_posix()
         if laws not in laws_targets:
-            lint.add(root_laws, f"must aggregate bricks/{brick.name}/laws.bend")
+            lint.add(root_laws, f"must aggregate {relative}/laws.bend")
         if proof not in proof_targets:
-            lint.add(root_proof, f"must aggregate bricks/{brick.name}/proof.bend")
-        if (brick / "proof.bend").is_file() and laws not in targets(brick / "proof.bend"):
-            lint.add(brick / "proof.bend", "must import its own ./laws.bend")
+            lint.add(root_proof, f"must aggregate {relative}/proof.bend")
+        if (package / "proof.bend").is_file() and laws not in targets(package / "proof.bend"):
+            lint.add(package / "proof.bend", "must import its own ./laws.bend")
 
 
 def lint_graph(bricks: list[Path], contracts: dict[str, Contract], lint: Lint) -> None:
@@ -393,11 +426,6 @@ def lint_graph(bricks: list[Path], contracts: dict[str, Contract], lint: Lint) -
             elif dependency not in names:
                 lint.add(paths[name], f"unknown sibling dependency {dependency!r}")
             else:
-                if contracts[dependency].lane == "workflow":
-                    lint.add(
-                        paths[name],
-                        f"sibling dependency {dependency!r} is a workflow brick",
-                    )
                 graph[name].add(dependency)
         for resource in contract.owned_state:
             if resource in owners:
@@ -424,25 +452,176 @@ def lint_graph(bricks: list[Path], contracts: dict[str, Contract], lint: Lint) -
         visit(name, ())
 
 
+def lint_workflow_entry(workflow: Path, lint: Lint) -> None:
+    path = workflow / "main.bend"
+    text = strip_comments(lint.text(path))
+    if DEF_RE.findall(text) != ["run"]:
+        lint.add(path, "must define only the public run entry point")
+    imports = {specifier for specifier, _ in IMPORT_RE.findall(text)}
+    if imports != {"Base", "./contract.bend", "./flow.bend"}:
+        lint.add(path, "must import only Base, ./contract.bend, and ./flow.bend")
+    signature = re.compile(
+        r"def\s+run\s*\(\s*input\s*:\s*Contract\.WorkflowInput\s*\)\s*"
+        r"->\s*IO\(\s*Contract\.WorkflowOutput\s*\)\s*:",
+        re.MULTILINE,
+    )
+    if not signature.search(text):
+        lint.add(path, "run must accept Contract.WorkflowInput and return IO(Contract.WorkflowOutput)")
+
+
+def lint_workflow_sources(
+    workflow: Path,
+    contract: WorkflowContract,
+    brick_names: set[str],
+    lint: Lint,
+) -> None:
+    root = lint.root.resolve()
+    bricks_root = (lint.root / "bricks").resolve()
+    workflows_root = (lint.root / "workflows").resolve()
+    actual: dict[str, set[str]] = {}
+
+    for path in sorted(workflow.rglob("*.bend")):
+        text = strip_comments(lint.text(path))
+        in_tests = "tests" in path.relative_to(workflow).parts
+        if "@unsafe" in text:
+            lint.add(path, "@unsafe is forbidden in workflows")
+        if TODO_RE.search(text):
+            lint.add(path, "contains an unresolved TODO")
+        if FOREIGN_RE.search(text):
+            lint.add(path, "workflow may not declare a foreign effect; use a brick")
+        if not in_tests and EFFECT_RE.search(text):
+            lint.add(path, "workflow may not perform a direct effect; use a brick")
+
+        for specifier, _alias in IMPORT_RE.findall(text):
+            if specifier == "Base":
+                continue
+            if specifier.startswith("0x") or specifier.startswith('"'):
+                lint.add(path, "workflow may import only its own files and declared brick boundaries")
+                continue
+            target = resolve_import(path, specifier)
+            if target is None or not target.is_file():
+                lint.add(path, f"import does not exist: {specifier}")
+                continue
+            try:
+                target.relative_to(root)
+            except ValueError:
+                lint.add(path, "relative import may not escape the repository")
+                continue
+
+            try:
+                brick_parts = target.relative_to(bricks_root).parts
+            except ValueError:
+                brick_parts = ()
+            if brick_parts:
+                name = brick_parts[0]
+                if path.name not in {"flow.bend", "laws.bend"}:
+                    lint.add(path, "only flow.bend and laws.bend may import a brick boundary")
+                allowed = {
+                    bricks_root / name / "main.bend",
+                    bricks_root / name / "contract.bend",
+                }
+                if target not in allowed:
+                    lint.add(path, "workflow may import only brick main.bend and contract.bend")
+                if name not in contract.dependencies:
+                    lint.add(path, f"brick dependency {name!r} is not declared")
+                if path.name == "flow.bend":
+                    actual.setdefault(name, set()).add(target.name)
+                continue
+
+            try:
+                workflow_parts = target.relative_to(workflows_root).parts
+            except ValueError:
+                workflow_parts = ()
+            if workflow_parts and workflow_parts[0] != workflow.name:
+                lint.add(path, "workflow may not import another workflow")
+                continue
+
+            try:
+                target.relative_to(workflow.resolve())
+            except ValueError:
+                lint.add(path, "workflow may import only its own files and declared brick boundaries")
+
+    for name in contract.dependencies:
+        if name not in brick_names:
+            lint.add(workflow / "contract.bend", f"unknown brick dependency {name!r}")
+        imported = actual.get(name, set())
+        if imported != {"contract.bend", "main.bend"}:
+            lint.add(
+                workflow / "flow.bend",
+                f"declared brick {name!r} must import both contract.bend and main.bend",
+            )
+    for name in actual.keys() - set(contract.dependencies):
+        lint.add(workflow / "flow.bend", f"brick dependency {name!r} is not declared")
+
+
+def lint_workflow_smokes(workflow: Path, lint: Lint) -> None:
+    tests = sorted((workflow / "tests").glob("*.bend"))
+    if not 1 <= len(tests) <= 3:
+        lint.add(workflow / "tests", "workflow must have one to three Bend smoke programs")
+    for path in tests:
+        text = strip_comments(lint.text(path))
+        if not re.search(r"(?m)^def\s+main\s*\(", text):
+            lint.add(path, "smoke program must define main")
+        imports = {specifier for specifier, _ in IMPORT_RE.findall(text)}
+        expected = {"Base", "../contract.bend", "../main.bend"}
+        if imports != expected:
+            lint.add(path, "smoke program may import only Base, ../contract.bend, and ../main.bend")
+
+
+def lint_workflow(
+    workflow: Path,
+    contract: WorkflowContract,
+    brick_names: set[str],
+    lint: Lint,
+) -> None:
+    for relative in WORKFLOW_REQUIRED:
+        if not (workflow / relative).exists():
+            lint.add(workflow / relative, "required workflow path is missing")
+    for path in workflow.rglob("*.py"):
+        lint.add(path, "Python runtime code is not allowed inside a Bend workflow")
+    lint_workflow_entry(workflow, lint)
+    lint_workflow_sources(workflow, contract, brick_names, lint)
+    lint_workflow_smokes(workflow, lint)
+
+
 def lint_repo(root: Path) -> Lint:
-    """Lint every brick under root and return findings without printing."""
+    """Lint every brick and workflow under root without executing project code."""
     lint = Lint(root)
     bricks_dir = root / "bricks"
-    for path in (root / "AGENTS.md", root / "LAWS.bend", root / "PROOF.bend", bricks_dir / "AGENTS.md"):
+    workflows_dir = root / "workflows"
+    for path in (
+        root / "AGENTS.md",
+        root / "LAWS.bend",
+        root / "PROOF.bend",
+        bricks_dir / "AGENTS.md",
+        workflows_dir / "AGENTS.md",
+    ):
         if not path.is_file():
             lint.add(path, "required repository contract is missing")
     if not bricks_dir.is_dir():
         lint.add(bricks_dir, "bricks directory is missing")
         return lint
+    if not workflows_dir.is_dir():
+        lint.add(workflows_dir, "workflows directory is missing")
+        return lint
     bricks = sorted(
         path for path in bricks_dir.iterdir()
         if path.is_dir() and not path.name.startswith((".", "__"))
     )
-    lint_law_custody(bricks, lint)
+    workflows = sorted(
+        path for path in workflows_dir.iterdir()
+        if path.is_dir() and not path.name.startswith((".", "__"))
+    )
+    lint_law_custody([*bricks, *workflows], lint)
     contracts = {brick.name: lint_contract(brick, lint) for brick in bricks}
     lint_graph(bricks, contracts, lint)
     for brick in bricks:
         lint_brick(brick, contracts[brick.name], lint)
+    workflow_contracts = {
+        workflow.name: lint_workflow_contract(workflow, lint) for workflow in workflows
+    }
+    for workflow in workflows:
+        lint_workflow(workflow, workflow_contracts[workflow.name], set(contracts), lint)
     return lint
 
 

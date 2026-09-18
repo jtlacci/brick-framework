@@ -13,7 +13,7 @@
 #
 # One model verdict per lane the pull request touches, each lane judged
 # against review/<lane>.md (the caller's own file wins over the framework's).
-# Routing is derived from bricks/<name>/contract.bend in the caller's tree.
+# Routing is derived from brick lanes and the caller's workflows/ tree.
 #
 # Bend validation always runs first. Without an ANTHROPIC_API_KEY secret only
 # the model verdict is skipped, loudly; proof, compilation, and boundary lint
@@ -91,6 +91,14 @@ jobs:
           find bricks -mindepth 2 -maxdepth 2 -name main.bend -print0 |
             while IFS= read -r -d '' entry; do
               bend "$entry" --checkup
+            done
+          find workflows -mindepth 2 -maxdepth 2 -name main.bend -print0 |
+            while IFS= read -r -d '' entry; do
+              bend "$entry" --checkup
+            done
+          find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend' -print0 |
+            while IFS= read -r -d '' smoke; do
+              bend "$smoke"
             done
           python3 .brick-framework/tools/lint_bricks.py --root .
 

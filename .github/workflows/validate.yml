@@ -69,6 +69,14 @@ jobs:
             while IFS= read -r -d '' entry; do
               bend "$entry" --checkup
             done
+          find workflows -mindepth 2 -maxdepth 2 -name main.bend -print0 |
+            while IFS= read -r -d '' entry; do
+              bend "$entry" --checkup
+            done
+          find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend' -print0 |
+            while IFS= read -r -d '' smoke; do
+              bend "$smoke"
+            done
 
       - name: run framework example
         if: github.repository == 'jtlacci/brick-framework'

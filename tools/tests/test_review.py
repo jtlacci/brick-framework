@@ -26,6 +26,8 @@ class Fixture(unittest.TestCase):
         shutil.copy(ROOT / "AGENTS.md", self.root / "AGENTS.md")
         (self.root / "bricks").mkdir()
         shutil.copy(ROOT / "bricks/AGENTS.md", self.root / "bricks/AGENTS.md")
+        (self.root / "workflows").mkdir()
+        shutil.copy(ROOT / "workflows/AGENTS.md", self.root / "workflows/AGENTS.md")
 
     def brick(self, name: str) -> Path:
         target = self.root / "bricks" / name
@@ -52,14 +54,14 @@ class RoutingTests(Fixture):
         self.assertIsNone(review.brick_of("bricks/AGENTS.md"))
         self.assertIsNone(review.brick_of("tools/review.py"))
         self.assertIsNone(review.brick_of("README.md"))
+        self.assertEqual(review.workflow_of("workflows/send_order/flow.bend"), "send_order")
+        self.assertIsNone(review.workflow_of("workflows/AGENTS.md"))
 
     def test_lane_is_read_from_the_contract(self) -> None:
         self.brick("plain")
         self.lane(self.brick("calc"), "Pure")
-        self.lane(self.brick("flow"), "Workflow")
         self.assertEqual(review.lane_of(self.root, "plain"), "strict")
         self.assertEqual(review.lane_of(self.root, "calc"), "pure")
-        self.assertEqual(review.lane_of(self.root, "flow"), "workflow")
 
     def test_missing_contract_reads_as_strict(self) -> None:
         self.assertEqual(review.lane_of(self.root, "gone"), "strict")
@@ -90,9 +92,11 @@ class RoutingTests(Fixture):
                          review.FRAMEWORK / "review/common.md")
 
     def test_last_declaration_wins(self) -> None:
+        (self.root / "review").mkdir()
+        (self.root / "review/money.md").write_text("# money\n", encoding="utf-8")
         self.lane(self.brick("twice"), "Pure")
-        self.lane(self.root / "bricks/twice", "Workflow", append=True)
-        self.assertEqual(review.lane_of(self.root, "twice"), "workflow")
+        self.lane(self.root / "bricks/twice", "Money", append=True)
+        self.assertEqual(review.lane_of(self.root, "twice"), "money")
 
     def test_route_splits_by_lane_and_names_the_rest(self) -> None:
         self.brick("plain")
@@ -101,13 +105,14 @@ class RoutingTests(Fixture):
             "bricks/plain/src/logic.bend",
             "bricks/calc/src/logic.bend",
             "bricks/calc/contract.bend",
+            "workflows/send_order/flow.bend",
             "tools/lint_bricks.py",
             "bricks/AGENTS.md",
         ])
         self.assertEqual(list(lanes), list(review.lanes(self.root)))
         self.assertEqual(lanes["strict"], ["bricks/plain/src/logic.bend"])
         self.assertEqual(lanes["pure"], ["bricks/calc/src/logic.bend", "bricks/calc/contract.bend"])
-        self.assertEqual(lanes["workflow"], [])
+        self.assertEqual(lanes["workflow"], ["workflows/send_order/flow.bend"])
         self.assertEqual(unrouted, ["tools/lint_bricks.py", "bricks/AGENTS.md"])
 
     def test_brick_docs_follow_the_touched_bricks(self) -> None:
@@ -117,6 +122,16 @@ class RoutingTests(Fixture):
         self.assertEqual(
             [d.relative_to(self.root).as_posix() for d in docs],
             ["bricks/plain/input/AGENTS.md", "bricks/plain/runner/AGENTS.md", "bricks/plain/src/AGENTS.md"],
+        )
+
+    def test_workflow_docs_follow_a_touched_workflow(self) -> None:
+        flow = self.root / "workflows/send_order"
+        flow.mkdir()
+        (flow / "AGENTS.md").write_text("# local workflow rules\n", encoding="utf-8")
+        docs = review.brick_docs(self.root, ["workflows/send_order/flow.bend"])
+        self.assertEqual(
+            [d.relative_to(self.root).as_posix() for d in docs],
+            ["workflows/send_order/AGENTS.md"],
         )
 
 
