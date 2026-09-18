@@ -1,7 +1,7 @@
-# End-to-end use of the example brick through its public boundary.
+# End-to-end composition through two public brick boundaries.
 import Base
-import ./bricks/example_brick/contract.bend as Contract
-import ./bricks/example_brick/main.bend as Example
+import ./bricks/double_brick/contract.bend as Contract
+import ./bricks/double_brick/main.bend as Double
 
 def print_output(output: Contract.BrickOutput) -> IO(Unit):
   Contract.BrickOutput{value} = output
@@ -9,5 +9,5 @@ def print_output(output: Contract.BrickOutput) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    output : Contract.BrickOutput <- Example.run(Contract.BrickInput{42})
+    output : Contract.BrickOutput <- Double.run(Contract.BrickInput{21})
     print_output(output)

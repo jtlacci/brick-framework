@@ -14,6 +14,8 @@ import sys
 REQUIRED = (
     "main.bend",
     "contract.bend",
+    "laws.bend",
+    "proof.bend",
     "input/AGENTS.md",
     "input/adapters",
     "input/config.bend",
@@ -347,6 +349,37 @@ def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
     LANES[contract.lane](brick, contract, lint)
 
 
+def lint_law_custody(bricks: list[Path], lint: Lint) -> None:
+    """Require brick-owned claims/proofs and complete root aggregation."""
+    root_laws = lint.root / "LAWS.bend"
+    root_proof = lint.root / "PROOF.bend"
+
+    def targets(path: Path) -> set[Path]:
+        found: set[Path] = set()
+        if not path.is_file():
+            return found
+        for specifier, _alias in bend_imports(path, lint):
+            target = resolve_import(path, specifier)
+            if target is not None:
+                found.add(target)
+        return found
+
+    laws_targets = targets(root_laws)
+    proof_targets = targets(root_proof)
+    if root_laws.resolve() not in proof_targets:
+        lint.add(root_proof, "must import ./LAWS.bend")
+
+    for brick in bricks:
+        laws = (brick / "laws.bend").resolve()
+        proof = (brick / "proof.bend").resolve()
+        if laws not in laws_targets:
+            lint.add(root_laws, f"must aggregate bricks/{brick.name}/laws.bend")
+        if proof not in proof_targets:
+            lint.add(root_proof, f"must aggregate bricks/{brick.name}/proof.bend")
+        if (brick / "proof.bend").is_file() and laws not in targets(brick / "proof.bend"):
+            lint.add(brick / "proof.bend", "must import its own ./laws.bend")
+
+
 def lint_graph(bricks: list[Path], contracts: dict[str, Contract], lint: Lint) -> None:
     names = set(contracts)
     owners: dict[str, str] = {}
@@ -405,6 +438,7 @@ def lint_repo(root: Path) -> Lint:
         path for path in bricks_dir.iterdir()
         if path.is_dir() and not path.name.startswith((".", "__"))
     )
+    lint_law_custody(bricks, lint)
     contracts = {brick.name: lint_contract(brick, lint) for brick in bricks}
     lint_graph(bricks, contracts, lint)
     for brick in bricks:

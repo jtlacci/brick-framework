@@ -6,7 +6,7 @@ This repository uses Bend 2 file boilerplate to organize one codebase as discret
 
 - Run `bend guide` and use the installed compiler as the syntax authority.
 - Read the closest inherited `AGENTS.md` files.
-- Keep human intent in `LAWS.bend`; implement proofs in `PROOF.bend`.
+- Keep each brick's human intent in its `laws.bend` and its implementations in `proof.bend`; keep root `LAWS.bend` and `PROOF.bend` complete as aggregators.
 - Run `bend PROOF.bend` after every behavior change and before committing.
 - Use Bend parallel calls only for independent, balanced work.
 
@@ -27,7 +27,7 @@ This repository uses Bend 2 file boilerplate to organize one codebase as discret
 - Every sibling dependency declares `Eventual{}` or `Orchestrated{}` consistency. Dependency cycles are forbidden.
 - Every persistent application-state resource has exactly one owning brick.
 - Bricks are repository-internal. Do not package or expose them to outside consumers.
-- State important invariants as Bend laws and keep `PROOF.bend` complete.
+- State important invariants as brick-owned Bend laws and keep the root proof aggregation complete.
 - Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
 
 ## Contract placement and precedence

@@ -16,15 +16,29 @@ class Fixture(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="bend-brick-lint-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        for name in ("AGENTS.md", "LAWS.bend", "PROOF.bend"):
-            shutil.copy(ROOT / name, self.root / name)
+        shutil.copy(ROOT / "AGENTS.md", self.root / "AGENTS.md")
+        (self.root / "LAWS.bend").write_text("import Base\n", encoding="utf-8")
+        (self.root / "PROOF.bend").write_text(
+            "import Base\nimport ./LAWS.bend as Laws\n", encoding="utf-8"
+        )
         (self.root / "bricks").mkdir()
         shutil.copy(ROOT / "bricks/AGENTS.md", self.root / "bricks/AGENTS.md")
 
     def brick(self, name: str = "example_brick") -> Path:
         target = self.root / "bricks" / name
         shutil.copytree(ROOT / "bricks/example_brick", target)
+        self.sync_aggregators()
         return target
+
+    def sync_aggregators(self) -> None:
+        names = sorted(path.name for path in (self.root / "bricks").iterdir() if path.is_dir())
+        laws = ["# Test root law aggregation.", "import Base"]
+        proofs = ["# Test root proof aggregation.", "import Base", "import ./LAWS.bend as Laws"]
+        for index, name in enumerate(names):
+            laws.append(f"import ./bricks/{name}/laws.bend as Brick{index}Laws")
+            proofs.append(f"import ./bricks/{name}/proof.bend as Brick{index}Proof")
+        (self.root / "LAWS.bend").write_text("\n".join(laws) + "\n", encoding="utf-8")
+        (self.root / "PROOF.bend").write_text("\n".join(proofs) + "\n", encoding="utf-8")
 
     def definition(self, brick: Path, name: str, body: str) -> None:
         path = brick / "contract.bend"
@@ -90,6 +104,27 @@ class BoilerplateTests(Fixture):
         (brick / "input/config.bend").unlink()
         self.assertError("input/config.bend: required brick path is missing")
 
+    def test_brick_laws_and_proof_are_required(self) -> None:
+        brick = self.brick()
+        (brick / "laws.bend").unlink()
+        (brick / "proof.bend").unlink()
+        self.assertError("laws.bend: required brick path is missing")
+        self.assertError("proof.bend: required brick path is missing")
+
+    def test_root_must_aggregate_every_brick_law_and_proof(self) -> None:
+        self.brick()
+        (self.root / "LAWS.bend").write_text("import Base\n", encoding="utf-8")
+        (self.root / "PROOF.bend").write_text(
+            "import Base\nimport ./LAWS.bend as Laws\n", encoding="utf-8"
+        )
+        self.assertError("must aggregate bricks/example_brick/laws.bend")
+        self.assertError("must aggregate bricks/example_brick/proof.bend")
+
+    def test_brick_proof_must_import_its_laws(self) -> None:
+        brick = self.brick()
+        (brick / "proof.bend").write_text("import Base\n", encoding="utf-8")
+        self.assertError("must import its own ./laws.bend")
+
     def test_python_runtime_is_rejected(self) -> None:
         brick = self.brick()
         (brick / "src/logic.py").write_text("pass\n", encoding="utf-8")
@@ -134,7 +169,9 @@ class BoundaryTests(Fixture):
     def sibling_adapter(self, brick: Path, sibling: str) -> None:
         (brick / f"input/adapters/{sibling}.bend").write_text(
             f"import Base\nimport ../../../{sibling}/contract.bend as SiblingContract\n"
-            f"import ../../../{sibling}/main.bend as Sibling\n",
+            f"import ../../../{sibling}/main.bend as Sibling\n\n"
+            "def call(input: SiblingContract.BrickInput) -> IO(SiblingContract.BrickOutput):\n"
+            "  Sibling.run(input)\n",
             encoding="utf-8",
         )
 
@@ -222,7 +259,9 @@ class GraphTests(Fixture):
     def sibling(brick: Path, sibling: str) -> None:
         (brick / f"input/adapters/{sibling}.bend").write_text(
             f"import Base\nimport ../../../{sibling}/contract.bend as SiblingContract\n"
-            f"import ../../../{sibling}/main.bend as Sibling\n", encoding="utf-8"
+            f"import ../../../{sibling}/main.bend as Sibling\n\n"
+            "def call(input: SiblingContract.BrickInput) -> IO(SiblingContract.BrickOutput):\n"
+            "  Sibling.run(input)\n", encoding="utf-8"
         )
 
     def test_nothing_may_depend_on_workflow(self) -> None:

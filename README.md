@@ -1,6 +1,6 @@
 # Internal Bend bricks
 
-This repository is Bend 2 boilerplate for organizing one codebase as discrete domain bricks. Brick behavior is written in [Bend](https://github.com/bendlang/bend), important invariants are stated in `LAWS.bend`, and `bend PROOF.bend` is the machine-checked merge gate.
+This repository is Bend 2 boilerplate for organizing one codebase as discrete domain bricks. Bricks supply the ownership and dependency boundaries; Bend supplies typed execution and machine-checked laws. `bend PROOF.bend` is the repository-wide merge gate.
 
 Bricks are repository-internal modules, not external packages or services. Define every domain as a named folder under `bricks/`:
 
@@ -8,6 +8,8 @@ Bricks are repository-internal modules, not external packages or services. Defin
 bricks/<brick_name>/
 ├── main.bend             # the only sibling-call surface
 ├── contract.bend         # typed boundary, lane, dependencies, state ownership
+├── laws.bend             # human-owned invariants for this brick
+├── proof.bend            # machine-checked implementations of those laws
 ├── AGENTS.md             # optional domain-specific additions
 ├── input/
 │   ├── AGENTS.md
@@ -21,7 +23,7 @@ bricks/<brick_name>/
     └── ...               # private domain logic
 ```
 
-`example_brick` is a compiling reference brick. Its public `run` returns `IO(BrickOutput)`, its private transformation is pure, and the root law proves that the transformation preserves the input value.
+`example_brick` is a compiling leaf brick. `double_brick` is the composition example: its declared `Orchestrated{}` sibling adapter calls only `example_brick.run`, then its private logic doubles the returned value. Running `example.bend` sends `21` through both public boundaries and prints `42`.
 
 ## Bend contract
 
@@ -52,21 +54,22 @@ def run(input: Contract.BrickInput) -> IO(Contract.BrickOutput):
   Runner.run(input)
 ```
 
-Using `IO` uniformly keeps pure and effectful bricks composable. Pure bricks return with `IO.pure`; effectful bricks sequence adapters in their runner or source as their local contract requires.
+Using `IO` uniformly keeps pure and effectful bricks composable. Pure bricks return with `IO.pure`. For effectful bricks, the runner builds local context and calls `src/`; private logic requests effects through its own adapters, and adapters implement the boundary call.
 
 ## Laws and proofs
 
-`LAWS.bend` is the human-owned specification. It imports the smallest pure functions needed to state non-negotiable behavior. `PROOF.bend` is the implementation-owned proof and must fill every law. Do not weaken a law to make a proof pass.
+Each brick owns a `laws.bend` human specification and a paired `proof.bend`. Root `LAWS.bend` and `PROOF.bend` aggregate every brick, and the linter rejects an unaggregated claim or proof. Do not weaken a law to make a proof pass.
 
 After editing Bend code, run:
 
 ```sh
 bend PROOF.bend
 bend bricks/example_brick/main.bend --checkup
+bend bricks/double_brick/main.bend --checkup
 bend example.bend
 ```
 
-The first command must print `All terms check.` The second checks the example entry module and each direct import independently. The third executes the public boundary and prints `42`. Add laws for business invariants, boundary translations, and pure algorithms. IO itself can be constrained by proving equality with an expected IO term, but keep most laws over pure functions so they remain small and useful.
+The first command must print `All terms check.` The entry checks compile each public surface and its direct imports independently. The example executes the real sibling-adapter path and prints `42`. Add laws for business invariants, boundary translations, and pure algorithms. IO itself can be constrained by proving equality with an expected IO term, but keep most laws over pure functions so they remain small and useful.
 
 ## Lanes
 
@@ -96,13 +99,13 @@ python3 -m unittest discover -s tools/tests -t . -v
 
 The linter checks shape, contract literals, import direction, public entry signatures, lane rules, ownership, and graph cycles. The graph command renders declared dependencies as Mermaid. The Python review client remains the transport for the optional model-assisted pull-request review.
 
-## Install Bend
+## Pinned Bend toolchain
 
-Follow Bend's current upstream instructions, then read the language guide before editing:
+The repository pins Bend in `.bend-version`; CI downloads that exact release archive and verifies its SHA-256 before running it. A local compiler must report the same version:
 
 ```sh
-curl -fsSL https://bend-lang.com/install.sh | sh
+bend --version
 bend guide
 ```
 
-Bend 2 is young and its language and tooling may change. This repository currently targets Bend 2.0.5 semantics; CI also exercises the installed release so upstream drift is visible.
+Bend 2 is young and its language and tooling may change. Update `.bend-version`, the release URL/checksum in both workflows, and the integration expectation together when upgrading; do not let an automatic update silently change the merge gate.

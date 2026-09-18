@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BEND_HOME: ${{ runner.temp }}/bend
+      BEND_VERSION: "2.0.5"
+      BEND_SHA256: "4db70e77ce1b1027f1d0e15dee025921fa794a9b415add4350ec7c64acf2775b"
       BEND_NO_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +28,29 @@ jobs:
           path: .brick-framework
         if: github.event_name == 'workflow_call'
 
-      - name: install Bend
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: install pinned Bend
         run: |
-          curl -fsSL https://bend-lang.com/install.sh | sh
-          echo "$BEND_HOME/bin" >> "$GITHUB_PATH"
+          archive="$RUNNER_TEMP/bend-${BEND_VERSION}.tar.gz"
+          curl -fsSL "https://bend-lang.com/dl/${BEND_VERSION}.tar.gz" -o "$archive"
+          echo "${BEND_SHA256}  ${archive}" | sha256sum --check -
+          mkdir -p "$BEND_HOME" "$RUNNER_TEMP/bend-bin"
+          tar -xzf "$archive" -C "$BEND_HOME"
+          echo "BEND_ENTRY=$BEND_HOME/bend2/main.ts" >> "$GITHUB_ENV"
+          printf '%s\n' '#!/usr/bin/env sh' 'exec bun "$BEND_ENTRY" "$@"' > "$RUNNER_TEMP/bend-bin/bend"
+          chmod +x "$RUNNER_TEMP/bend-bin/bend"
+          echo "$RUNNER_TEMP/bend-bin" >> "$GITHUB_PATH"
+
+      - name: verify pinned Bend version
+        run: |
+          pin=.bend-version
+          if [ "${{ github.event_name }}" = workflow_call ]; then
+            pin=.brick-framework/.bend-version
+          fi
+          test "$(bend --version)" = "bend $(cat "$pin")"
 
       - name: check laws and imported modules
         run: |
@@ -53,4 +74,6 @@ jobs:
 
       - name: test framework host tools
         if: github.repository == 'jtlacci/brick-framework'
+        env:
+          BEND_REQUIRED: "1"
         run: python3 -m unittest discover -s tools/tests -t . -v
