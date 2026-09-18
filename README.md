@@ -1,96 +1,108 @@
-# Internal Python bricks
+# Internal Bend bricks
 
-This repository organizes one codebase as discrete domain bricks. Bricks are used only by sibling bricks inside this repository; they are not external packages or services.
+This repository is Bend 2 boilerplate for organizing one codebase as discrete domain bricks. Brick behavior is written in [Bend](https://github.com/bendlang/bend), important invariants are stated in `LAWS.bend`, and `bend PROOF.bend` is the machine-checked merge gate.
 
-Define every domain as a named folder under `bricks/`. `example_brick` is an empty placeholder showing the required files and contracts.
+Bricks are repository-internal modules, not external packages or services. Define every domain as a named folder under `bricks/`:
 
 ```text
 bricks/<brick_name>/
-├── __init__.py           # exposes only the internal run entry point
-├── contract.py           # typed boundary, dependencies, state ownership
+├── main.bend             # the only sibling-call surface
+├── contract.bend         # typed boundary, lane, dependencies, state ownership
 ├── AGENTS.md             # optional domain-specific additions
-├── input/                # config, adapters, saved examples, input contract
-├── runner/               # run entry point, IDs, history, optional flow smoke tests
-└── src/                  # private logic and optional focused tests
+├── input/
+│   ├── AGENTS.md
+│   ├── config.bend       # typed compile-time configuration
+│   └── adapters/         # external and sibling effect boundaries
+├── runner/
+│   ├── AGENTS.md
+│   └── run.bend          # IO orchestration
+└── src/
+    ├── AGENTS.md
+    └── ...               # private domain logic
 ```
 
-- Rules inherit from the closest `AGENTS.md`; not every folder needs one. The `input/`, `runner/`, and `src/` folders have contracts because each owns a different boundary.
-- Add one file under `input/adapters/` for every external source and sibling brick.
-- `src/` reaches external sources and sibling bricks only through its own `input/` adapters.
-- Expose only `run` to sibling bricks through the brick's top-level `__init__.py`.
-- Keep named adapter examples under `input/data/<adapter>/<case>.json` and recent runs under `runner/runs/`.
-- Sibling calls are fully brick-contained: they create their own run IDs and always use their own default saved mode.
-- Declare every sibling dependency and its `eventual` or `orchestrated` consistency policy in `contract.py`. The declared graph must be acyclic.
-- Declare stable identifiers for application state owned by the brick. One state resource has one owner.
+`example_brick` is a compiling reference brick. Its public `run` returns `IO(BrickOutput)`, its private transformation is pure, and the root law proves that the transformation preserves the input value.
 
-`contract.py` contains:
+## Bend contract
 
-```python
-CONTRACT_VERSION = 1
-LANE = "strict"
-SIBLING_DEPENDENCIES = {"another_brick": "eventual"}
-OWNED_STATE = ("database:example-records",)
+Each `contract.bend` declares `BrickInput`, `BrickOutput`, and four literal metadata definitions:
 
-class BrickInput(TypedDict): ...
-class BrickOutput(TypedDict): ...
+```bend
+def contract_version() -> U32:
+  1
+
+def lane() -> Lane:
+  Strict{}
+
+def sibling_dependencies() -> List<&2, Dependency>:
+  [Dependency{"another_brick", Eventual{}}]
+
+def owned_state() -> List<&2, String>:
+  ["database:example-records"]
 ```
 
-Smoke tests are not required per brick. Keep them only under `runner/tests/` of a `workflow` brick, with at most three files. They prove integration through `run`. Put focused domain tests under `src/tests/` only when the private logic warrants them.
+Keep those definitions literal. The host-side linter and graph renderer parse them without executing project code. A dependency is `Eventual{}` when independently committed state and lag are acceptable, or `Orchestrated{}` when the importing brick owns sequencing and compensation. The dependency graph must be acyclic, and every persistent state identifier has one owner.
 
-Sibling adapters still import only the sibling's top-level `run`; `contract.py` is not another exported API. The `run` annotations expose the boundary to static tooling, while each adapter translates into its owning brick's types.
+Sibling adapters import `bricks/<sibling>/contract.bend` for the boundary datatypes and `bricks/<sibling>/main.bend` for execution. Bend modules do not re-export imported constructors, so both imports are required to construct a typed input. Adapters call only `Sibling.run`; they never reach the sibling's runner, source, configuration, or data. The sibling creates its own run context.
 
-Split a brick when `run` becomes a large dispatcher, its adapters stop being easy to understand, or unrelated changes repeatedly touch the same `src/`.
+Every public brick entry point has this shape:
+
+```bend
+def run(input: Contract.BrickInput) -> IO(Contract.BrickOutput):
+  Runner.run(input)
+```
+
+Using `IO` uniformly keeps pure and effectful bricks composable. Pure bricks return with `IO.pure`; effectful bricks sequence adapters in their runner or source as their local contract requires.
+
+## Laws and proofs
+
+`LAWS.bend` is the human-owned specification. It imports the smallest pure functions needed to state non-negotiable behavior. `PROOF.bend` is the implementation-owned proof and must fill every law. Do not weaken a law to make a proof pass.
+
+After editing Bend code, run:
+
+```sh
+bend PROOF.bend
+bend bricks/example_brick/main.bend --checkup
+bend example.bend
+```
+
+The first command must print `All terms check.` The second checks the example entry module and each direct import independently. The third executes the public boundary and prints `42`. Add laws for business invariants, boundary translations, and pure algorithms. IO itself can be constrained by proving equality with an expected IO term, but keep most laws over pure functions so they remain small and useful.
 
 ## Lanes
 
-A lane is the enforcement class a brick declares for itself with `LANE` in `contract.py`. Every rule above applies to every brick; a lane only adds rules, so no brick can opt out of the boundary. A brick that declares no `LANE` is `strict`.
+A lane only adds constraints; it never relaxes the base brick boundary.
 
-| Lane | What it means | What the linter adds |
+| Lane | Meaning | Additional enforcement |
 | --- | --- | --- |
-| `strict` | The regular brick. | Nothing beyond the rules every brick gets. |
-| `pure` | Output is a function of input alone. | No adapters and no sibling dependencies. The direct-I/O ban that `src/` already carries widens to the whole brick, plus `random` and `time`, plus any `.now()`, `.today()`, or `.utcnow()` call. `runner/` is exempt because it records runs and owns `rng.py`; `datetime` stays importable for annotations and arithmetic. |
-| `workflow` | Invoked as a whole operation, never imported for its parts. | No contract may name it as a sibling dependency. It alone may carry a process door, `__main__.py`, and that door may import nothing from the brick tree except the brick's own `run`. Smoke tests belong only here. |
+| `Strict{}` | The regular brick. | None beyond the shared rules. |
+| `Pure{}` | Output is a function of input alone. | No adapters, sibling dependencies, foreign imports, clocks, files, networking, randomness, or other effects. The public `run` may only lift a pure result with `IO.pure`. |
+| `Workflow{}` | A top-level operation invoked as a whole. | No sibling may depend on it. It alone may define `app.bend` with a process `main`, and may carry up to three Bend smoke programs under `runner/tests/`. |
 
-A lane cannot exist without an enforcer: the `LANES` table in `tools/lint_bricks.py` maps each name to the function that checks it, and the linter rejects any other value.
+## Adapters and evidence
 
-## Saved, fresh, and save
+Bend 2 intentionally has a small standard library. External adapters may use Base effects or add paired foreign implementations (`effect.c` and `effect.js`) beside the Bend declaration. Keep those foreigns thin: normalization and business decisions stay in Bend.
 
-The public Python entry point has the shape:
+The previous Python framework's implicit saved/fresh/save JSON runtime is not carried forward. Bend currently has no JSON library, and hiding persistence behind an unproved host runtime would defeat this migration. If a brick needs replayable evidence, model the mode in its typed contract and commit reviewed `.bend` fixture modules under `input/data/`; a live adapter must fail explicitly when its required host effect is unavailable. Fixture capture is an explicit host operation, never an automatic fallback from replay to live data.
 
-```python
-run(inputs, *, fresh=False, save=False)
-```
+## Repository tools
 
-| Option | Adapter behavior | Tracked example data |
-| --- | --- | --- |
-| default | Replay the named saved example | Read only |
-| `fresh=True` | Call the real source | Unchanged |
-| `save=True` | Call the real source, redact and validate it | Atomically replace the named example |
-
-`save=True` implies a fresh call. A missing or mismatched saved example is an error, never an implicit live call. Neither option propagates when a sibling adapter calls another brick.
-
-Examples use stable paths and canonical JSON, so normal runs do not churn Git. An explicit save is the review point that may create a diff. Each saved example includes the capture run ID; run records and evidence can be correlated later without involving the runner in adapter persistence.
-
-`bricks/__init__.py` enables repository-wide standard-library test discovery. Each brick's top-level file defines its repository-internal entry point. Keep `runner/__init__.py`; add `runner/tests/__init__.py` only when that workflow has smoke tests. `input/`, `adapters/`, and `src/` do not need package-marker files.
-
-Once at least one workflow has a smoke test, run all smoke tests with:
-
-```sh
-python3 -m unittest discover -s bricks -t . -v
-```
-
-Python's test runner exits with status 5 when no tests exist, which is the expected state of this empty boilerplate.
-
-Check brick shape, import direction, public exports, and evidence limits with:
+Python remains only as host-side repository tooling because Bend 2 does not yet provide native Git, JSON, HTTP/TLS, or subprocess libraries suitable for the review gate. It is not part of any brick runtime.
 
 ```sh
 python3 tools/lint_bricks.py
+python3 tools/graph_bricks.py
+python3 -m unittest discover -s tools/tests -t . -v
 ```
 
-Render the declared sibling-dependency graph as Mermaid with:
+The linter checks shape, contract literals, import direction, public entry signatures, lane rules, ownership, and graph cycles. The graph command renders declared dependencies as Mermaid. The Python review client remains the transport for the optional model-assisted pull-request review.
+
+## Install Bend
+
+Follow Bend's current upstream instructions, then read the language guide before editing:
 
 ```sh
-python3 tools/graph_bricks.py
+curl -fsSL https://bend-lang.com/install.sh | sh
+bend guide
 ```
 
-Each node lists the state its brick owns. A solid arrow is an `orchestrated` dependency and a dashed arrow is an `eventual` one. Bricks that no sibling depends on are drawn with a thicker border; those are the top-level flows that may carry smoke tests.
+Bend 2 is young and its language and tooling may change. This repository currently targets Bend 2.0.5 semantics; CI also exercises the installed release so upstream drift is visible.

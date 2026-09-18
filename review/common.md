@@ -5,8 +5,8 @@ You are reviewing one diff to a repository of domain bricks. `AGENTS.md` and
 diff touches follow in the payload. Read them before judging.
 
 `tools/lint_bricks.py` has already run. It decides everything an integer can
-decide: folder shape, import direction, the public `run` surface, declared
-sibling dependencies, state ownership, evidence size, and the extra rules of the
+decide: folder shape, Bend import direction, the public `run` surface, literal
+contract metadata, sibling dependencies, state ownership, and the extra rules of the
 lane. **Do not re-check any of that.** Your criteria, listed in the lane section
 below, are exactly the questions a parser cannot answer.
 
@@ -28,9 +28,9 @@ that half of a change is missing, including that a test is absent.
 ## Bias
 
 **Prefer block when uncertain whether the brick boundary still holds.** A
-boundary defect is silent: an adapter that calls a live source on the default
-path, a pure brick with a hidden input, a runner that computes — each one keeps
-working, and every saved example, run record and sibling that trusts the
+boundary defect is silent: an adapter that reaches a live source while claiming
+to replay a fixture, a pure brick with a hidden input, a runner that computes,
+or a weakened law can each keep working while every sibling that trusts the
 boundary is quietly wrong. A wrong block costs the author one reply. That is the
 only coin this bias covers. A doubt about simplicity, naming, or code you were
 not shown is an advisory finding, not a block.
@@ -75,9 +75,9 @@ Emit exactly one JSON object and nothing else:
 {
   "findings": [
     {
-      "file": "bricks/orders/input/adapters/prices.py",
-      "issue": "the default (saved) path falls through to the HTTP call when the example is missing",
-      "suggestion": "criterion 2: raise on a missing example; a live call is only ever explicit",
+      "file": "bricks/orders/input/adapters/prices.bend",
+      "issue": "the replay branch falls through to the live foreign effect when its fixture is missing",
+      "suggestion": "criterion 2: fail explicitly on a missing fixture; live effects must be explicit",
       "severity": "block"
     }
   ]

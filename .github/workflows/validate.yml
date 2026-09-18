@@ -1,0 +1,56 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      framework-ref:
+        description: framework revision whose host tools should validate the caller
+        type: string
+        default: main
+
+jobs:
+  bend:
+    runs-on: ubuntu-latest
+    env:
+      BEND_HOME: ${{ runner.temp }}/bend
+      BEND_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jtlacci/brick-framework
+          ref: ${{ inputs.framework-ref }}
+          path: .brick-framework
+        if: github.event_name == 'workflow_call'
+
+      - name: install Bend
+        run: |
+          curl -fsSL https://bend-lang.com/install.sh | sh
+          echo "$BEND_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: check laws and imported modules
+        run: |
+          bend PROOF.bend
+          find bricks -mindepth 2 -maxdepth 2 -name main.bend -print0 |
+            while IFS= read -r -d '' entry; do
+              bend "$entry" --checkup
+            done
+
+      - name: run framework example
+        if: github.repository == 'jtlacci/brick-framework'
+        run: test "$(bend example.bend)" = "42"
+
+      - name: lint brick boundaries
+        if: github.event_name == 'workflow_call'
+        run: python3 .brick-framework/tools/lint_bricks.py --root .
+
+      - name: lint framework brick boundaries
+        if: github.event_name != 'workflow_call'
+        run: python3 tools/lint_bricks.py --root .
+
+      - name: test framework host tools
+        if: github.repository == 'jtlacci/brick-framework'
+        run: python3 -m unittest discover -s tools/tests -t . -v

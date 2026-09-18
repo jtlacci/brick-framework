@@ -1,40 +1,39 @@
 # Repository contract
 
-This repository uses Python file boilerplate to organize one codebase as discrete domain bricks.
+This repository uses Bend 2 file boilerplate to organize one codebase as discrete domain bricks. Python is host-side repository tooling only; brick behavior belongs in `.bend` files.
+
+## Before editing Bend
+
+- Run `bend guide` and use the installed compiler as the syntax authority.
+- Read the closest inherited `AGENTS.md` files.
+- Keep human intent in `LAWS.bend`; implement proofs in `PROOF.bend`.
+- Run `bend PROOF.bend` after every behavior change and before committing.
+- Use Bend parallel calls only for independent, balanced work.
 
 ## Terminology
 
-- The **repository boundary** separates this repository from APIs, databases, files, services, and other outside systems. Only these are called external.
-- A **brick boundary** separates one brick from its sibling bricks inside this repository.
-- A **brick entry point** is `run`. It is repository-internal and is called by sibling-brick adapters.
-- A **sibling adapter** is an adapter whose target is another brick's `run` entry point.
-
-## Purpose
-
-- Optimize for human and agent visibility, not framework machinery.
-- A brick may be complex inside `src/`, but its inputs and recent runs must make its behavior understandable.
-- Keep this repository as boilerplate. Do not add shared runtimes, generators, dependencies, or heavier enforcement unless the user explicitly requests them.
-- Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
+- The **repository boundary** separates this repository from APIs, databases, files, services, and other outside systems.
+- A **brick boundary** separates one brick from its sibling bricks.
+- A **brick entry point** is `run` in the brick's `main.bend`.
+- A **sibling adapter** imports another brick's `contract.bend` for boundary types and `main.bend` for execution, then calls only `run`.
 
 ## Non-negotiable rules
 
 - Put every domain brick in its own named folder under `bricks/`.
-- Every brick has `input/`, `runner/`, and `src/`.
-- Every brick declares a typed, versioned input and output boundary in `contract.py`.
-- A brick exposes only its `run` entry point to sibling bricks.
-- External access crosses an external-source adapter; sibling-brick access crosses a sibling adapter.
-- Every sibling dependency declares its consistency policy as `eventual` or `orchestrated`. Dependency cycles are not allowed; introduce or reshape a parent brick instead.
-- Every persistent application-state resource has exactly one owning brick. Brick-local evidence folders are owned implicitly by their brick.
-- Bricks are used only inside this repository. Do not package or expose them for outside consumers.
-- Saved adapter examples and run records are local, bounded by configuration, and tracked in Git.
-- Keep only a small number of high-level smoke tests, while allowing focused tests for complex `src/` logic.
+- Every brick has `input/`, `runner/`, and `src/` boundaries plus `main.bend` and `contract.bend`.
+- Every brick declares typed `BrickInput` and `BrickOutput` datatypes and literal version, lane, dependency, and state-ownership metadata in `contract.bend`.
+- A brick exposes contract datatypes plus the single executable entry point `run`, which returns `IO(BrickOutput)`.
+- External access crosses an input adapter; sibling access crosses a sibling adapter.
+- Every sibling dependency declares `Eventual{}` or `Orchestrated{}` consistency. Dependency cycles are forbidden.
+- Every persistent application-state resource has exactly one owning brick.
+- Bricks are repository-internal. Do not package or expose them to outside consumers.
+- State important invariants as Bend laws and keep `PROOF.bend` complete.
+- Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
 
 ## Contract placement and precedence
 
-`AGENTS.md` rules apply to their folder and descendants. A nested `AGENTS.md` adds rules for its subtree and may not relax a parent rule.
-
-Not every folder needs an `AGENTS.md`. Add one only where the folder introduces a distinct responsibility or additional rule. This boilerplate keeps contracts at the repository root, `bricks/`, and each brick's `input/`, `runner/`, and `src/` boundaries. A brick-level `AGENTS.md` is optional and should contain only domain-specific additions.
+`AGENTS.md` rules apply to their folder and descendants. A nested file may add rules but never relax a parent rule. Add a brick-level contract only for domain-specific additions.
 
 ## When to split a brick
 
-Split or reshape a brick when its `run` becomes a large operation dispatcher, its adapter set is no longer easy to understand, or unrelated changes repeatedly touch the same `src/`. Encapsulation is not permission for an internal monolith.
+Split or reshape a brick when `run` becomes a large operation dispatcher, its adapter set is no longer easy to understand, or unrelated changes repeatedly touch the same `src/` code.

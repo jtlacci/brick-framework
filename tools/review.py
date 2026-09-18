@@ -11,7 +11,8 @@ sees which paths, hands each lane exactly the context its prompt describes,
 and turns the verdict into an exit code.
 
 ROUTING IS DERIVED, NOT DECLARED. A path's brick is `bricks/<name>/` and the
-brick's lane is `LANE` in its `contract.py`, parsed and never imported. Paths
+brick's lane is the literal returned by `lane()` in its `contract.bend`, parsed
+and never imported. Paths
 outside `bricks/` are printed as NOT REVIEWED rather than passing quietly.
 
 THE REVIEWED TREE IS NOT THIS TREE. This file lives in the framework and
@@ -37,10 +38,10 @@ memory, which is the state round one is defined by.
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -130,28 +131,22 @@ def lanes(root: Path) -> tuple[str, ...]:
 
 
 def lane_of(root: Path, brick: str) -> str:
-    """The lane a brick declares with `LANE` in its contract. The contract is
+    """The lane a brick returns from `lane()` in its Bend contract. It is
     parsed, never imported. Missing, unparseable, or unknown reads as strict:
     routing must not fail on the very file a change may have broken, and the
     linter is the place that rejects a bad declaration."""
-    contract = root / "bricks" / brick / "contract.py"
+    contract = root / "bricks" / brick / "contract.bend"
     try:
-        tree = ast.parse(contract.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
+        text = contract.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return STRICT
     known = lanes(root)
-    lane = STRICT
-    # The last assignment wins, as it would if the module ran.
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "LANE" for t in node.targets
-        ):
-            try:
-                value = ast.literal_eval(node.value)
-            except ValueError:
-                value = None
-            lane = value if value in known else STRICT
-    return lane
+    matches = re.findall(
+        r"(?ms)^def\s+lane\s*\([^\n]*\)[^\n]*:\s*\n\s+([A-Z][A-Za-z0-9_]*)\{\}",
+        text,
+    )
+    lane = matches[-1].lower() if matches else STRICT
+    return lane if lane in known else STRICT
 
 
 def route(root: Path, files: list[str]) -> tuple[dict[str, list[str]], list[str]]:

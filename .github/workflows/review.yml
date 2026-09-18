@@ -11,7 +11,7 @@
 #
 # One model verdict per lane the pull request touches, each lane judged
 # against review/<lane>.md (the caller's own file wins over the framework's).
-# Routing is derived from bricks/<name>/contract.py in the caller's tree.
+# Routing is derived from bricks/<name>/contract.bend in the caller's tree.
 #
 # Without an ANTHROPIC_API_KEY secret the job SKIPS, loudly, and passes: a
 # repository opts into the gate by adding the secret, and nothing breaks
@@ -71,6 +71,10 @@ jobs:
 
       - if: steps.key.outputs.present == 'true'
         run: python3 -m pip install --quiet anthropic
+
+      - name: lint brick boundaries
+        if: steps.key.outputs.present == 'true'
+        run: python3 .brick-framework/tools/lint_bricks.py --root .
 
       # Memory across rounds: the verdicts the last run of THIS PR uploaded.
       # `gh run download` refuses artifacts from other workflow runs, so the

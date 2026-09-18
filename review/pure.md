@@ -1,33 +1,17 @@
 # The pure lane
 
-Everything in the strict lane applies, and the linter has already removed
-adapters, sibling dependencies, direct I/O, `random`, `time` and clock calls
-from this brick. What remains is the claim the lane makes and a parser cannot
-verify: **the output is a function of the input alone.**
+Everything in the strict lane applies. The linter has already removed adapters, sibling dependencies, foreign imports, and Base effects. What remains is the semantic claim: **the output is a function of the typed input alone.**
 
 ## What to judge
 
 Criteria 1–8 of the strict lane, then:
 
-9. **Hidden inputs.** Anything `src/` reads that did not arrive in the brick
-   input is a second input the contract does not declare: a module-level
-   mutable, a class attribute mutated across calls, a field of the run context
-   other than the input, a config value read inside `src/`, a default argument
-   evaluated once. A diff that introduces one blocks.
+9. **No hidden inputs.** A configuration constant, run context field, captured value, compile-time package value, or mutable foreign state that changes the result without appearing in `BrickInput` is a second input. Block.
 
-10. **Semantic nondeterminism.** Iteration over a set or over dict keys derived
-    from hashed objects, float accumulation whose order the output depends on,
-    `id()`-based ordering, thread timing. If two calls with the same input can
-    return different outputs, the brick is not pure. Block when the output
-    depends on it; advisory when only an internal order does.
+10. **No semantic nondeterminism.** Parallel evaluation may change scheduling but not results. Order-sensitive floating-point aggregation, data races hidden in a foreign, or another construction that can yield different outputs for the same input violates the lane. Block when output depends on it; advisory when only internal work order changes.
 
-11. **Purity by relocation.** A diff that keeps `src/` pure by moving the
-    effect into `runner/` — a runner that reads a file, calls a service, or
-    seeds the input from the environment before calling `src/` — has hidden the
-    effect where the lane does not look. The runner records runs and owns the
-    RNG; it is not a second `input/`. Block.
+11. **No purity by relocation.** Wrapping a file, clock, environment, network, or random read in `runner/` and then passing its result into pure `src/` does not make the brick pure. The runner may only lift the input-derived result with `IO.pure`. Block.
 
 ## Severity
 
-Criteria **9 and 11 block**; criterion 10 blocks when the output depends on
-it. The strict lane's severities stand for criteria 1–8.
+Criteria **9 and 11 block**; criterion 10 blocks when output depends on it. The strict lane severities stand for criteria 1–8.

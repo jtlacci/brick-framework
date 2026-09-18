@@ -33,26 +33,30 @@ class Fixture(unittest.TestCase):
                         ignore=shutil.ignore_patterns("__pycache__"))
         return target
 
-    def contract(self, brick: Path, **values: str) -> None:
-        """Append top-level assignments to the brick's contract."""
-        with (brick / "contract.py").open("a", encoding="utf-8") as handle:
-            for name, value in values.items():
-                handle.write(f"{name} = {value}\n")
+    def lane(self, brick: Path, constructor: str, *, append: bool = False) -> None:
+        path = brick / "contract.bend"
+        if append:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"\ndef lane() -> Lane:\n  {constructor}{{}}\n")
+            return
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("def lane() -> Lane:\n  Strict{}", f"def lane() -> Lane:\n  {constructor}{{}}")
+        path.write_text(text, encoding="utf-8")
 
 
 class RoutingTests(Fixture):
     def test_brick_of(self) -> None:
-        self.assertEqual(review.brick_of("bricks/alpha/src/logic.py"), "alpha")
-        self.assertEqual(review.brick_of("bricks/alpha/contract.py"), "alpha")
-        self.assertIsNone(review.brick_of("bricks/__init__.py"))
+        self.assertEqual(review.brick_of("bricks/alpha/src/logic.bend"), "alpha")
+        self.assertEqual(review.brick_of("bricks/alpha/contract.bend"), "alpha")
+        self.assertIsNone(review.brick_of("bricks/AGENTS.md"))
         self.assertIsNone(review.brick_of("bricks/AGENTS.md"))
         self.assertIsNone(review.brick_of("tools/review.py"))
         self.assertIsNone(review.brick_of("README.md"))
 
     def test_lane_is_read_from_the_contract(self) -> None:
         self.brick("plain")
-        self.contract(self.brick("calc"), LANE='"pure"')
-        self.contract(self.brick("flow"), LANE='"workflow"')
+        self.lane(self.brick("calc"), "Pure")
+        self.lane(self.brick("flow"), "Workflow")
         self.assertEqual(review.lane_of(self.root, "plain"), "strict")
         self.assertEqual(review.lane_of(self.root, "calc"), "pure")
         self.assertEqual(review.lane_of(self.root, "flow"), "workflow")
@@ -61,9 +65,10 @@ class RoutingTests(Fixture):
         self.assertEqual(review.lane_of(self.root, "gone"), "strict")
 
     def test_bad_declaration_reads_as_strict(self) -> None:
-        self.contract(self.brick("odd"), LANE='"money"')
-        self.contract(self.brick("dyn"), LANE='os.environ["LANE"]')
-        (self.brick("broken") / "contract.py").write_text("LANE = (", encoding="utf-8")
+        self.lane(self.brick("odd"), "Money")
+        path = self.brick("dyn") / "contract.bend"
+        path.write_text(path.read_text().replace("Strict{}", "choose_lane()"), encoding="utf-8")
+        (self.brick("broken") / "contract.bend").write_text("def lane(", encoding="utf-8")
         for name in ("odd", "dyn", "broken"):
             self.assertEqual(review.lane_of(self.root, name), "strict", name)
 
@@ -74,7 +79,7 @@ class RoutingTests(Fixture):
         (self.root / "review").mkdir()
         (self.root / "review/money.md").write_text("# money\n", encoding="utf-8")
         (self.root / "review/pure.md").write_text("# our pure\n", encoding="utf-8")
-        self.contract(self.brick("desk"), LANE='"money"')
+        self.lane(self.brick("desk"), "Money")
         self.assertEqual(review.lanes(self.root), ("strict", "money", "pure", "workflow"))
         self.assertEqual(review.lane_of(self.root, "desk"), "money")
         # Its own prompt where it has one, the framework's where it does not.
@@ -85,30 +90,30 @@ class RoutingTests(Fixture):
                          review.FRAMEWORK / "review/common.md")
 
     def test_last_declaration_wins(self) -> None:
-        self.contract(self.brick("twice"), LANE='"pure"')
-        self.contract(self.root / "bricks/twice", LANE='"workflow"')
+        self.lane(self.brick("twice"), "Pure")
+        self.lane(self.root / "bricks/twice", "Workflow", append=True)
         self.assertEqual(review.lane_of(self.root, "twice"), "workflow")
 
     def test_route_splits_by_lane_and_names_the_rest(self) -> None:
         self.brick("plain")
-        self.contract(self.brick("calc"), LANE='"pure"')
+        self.lane(self.brick("calc"), "Pure")
         lanes, unrouted = review.route(self.root, [
-            "bricks/plain/src/logic.py",
-            "bricks/calc/src/logic.py",
-            "bricks/calc/contract.py",
+            "bricks/plain/src/logic.bend",
+            "bricks/calc/src/logic.bend",
+            "bricks/calc/contract.bend",
             "tools/lint_bricks.py",
             "bricks/AGENTS.md",
         ])
         self.assertEqual(list(lanes), list(review.lanes(self.root)))
-        self.assertEqual(lanes["strict"], ["bricks/plain/src/logic.py"])
-        self.assertEqual(lanes["pure"], ["bricks/calc/src/logic.py", "bricks/calc/contract.py"])
+        self.assertEqual(lanes["strict"], ["bricks/plain/src/logic.bend"])
+        self.assertEqual(lanes["pure"], ["bricks/calc/src/logic.bend", "bricks/calc/contract.bend"])
         self.assertEqual(lanes["workflow"], [])
         self.assertEqual(unrouted, ["tools/lint_bricks.py", "bricks/AGENTS.md"])
 
     def test_brick_docs_follow_the_touched_bricks(self) -> None:
         self.brick("plain")
         self.brick("other")
-        docs = review.brick_docs(self.root, ["bricks/plain/src/logic.py", "bricks/plain/contract.py"])
+        docs = review.brick_docs(self.root, ["bricks/plain/src/logic.bend", "bricks/plain/contract.bend"])
         self.assertEqual(
             [d.relative_to(self.root).as_posix() for d in docs],
             ["bricks/plain/input/AGENTS.md", "bricks/plain/runner/AGENTS.md", "bricks/plain/src/AGENTS.md"],
@@ -195,7 +200,7 @@ class MemoryTests(Fixture):
 
     def test_brick_delta_reviews_again(self) -> None:
         previous = {"head": self.first, "lanes": {"strict": {"findings": []}}}
-        (self.root / "bricks/plain/src/logic.py").write_text("X = 1\n", encoding="utf-8")
+        (self.root / "bricks/plain/src/logic.bend").write_text("def x() -> U32:\n  1\n", encoding="utf-8")
         head = self.commit("logic")
         self.assertFalse(review.carried_forward(self.root, previous, head))
 

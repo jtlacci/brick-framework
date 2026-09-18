@@ -1,9 +1,4 @@
-"""Tests for tools/lint_bricks.py, standard library only.
-
-Every test builds a throwaway repository from the committed boilerplate,
-mutates one thing, and asserts on the exact message the linter reports.
-The boilerplate itself must lint clean; that is the first test.
-"""
+"""Tests for the standard-library Bend brick linter."""
 
 from __future__ import annotations
 
@@ -18,41 +13,52 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Fixture(unittest.TestCase):
-    """A copy of the boilerplate under a temporary root, one brick per name."""
-
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="brick-lint-"))
+        self.root = Path(tempfile.mkdtemp(prefix="bend-brick-lint-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        shutil.copy(ROOT / "AGENTS.md", self.root / "AGENTS.md")
+        for name in ("AGENTS.md", "LAWS.bend", "PROOF.bend"):
+            shutil.copy(ROOT / name, self.root / name)
         (self.root / "bricks").mkdir()
         shutil.copy(ROOT / "bricks/AGENTS.md", self.root / "bricks/AGENTS.md")
-        shutil.copy(ROOT / "bricks/__init__.py", self.root / "bricks/__init__.py")
 
     def brick(self, name: str = "example_brick") -> Path:
         target = self.root / "bricks" / name
-        shutil.copytree(ROOT / "bricks/example_brick", target, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(ROOT / "bricks/example_brick", target)
         return target
 
-    def contract(self, brick: Path, **values: str) -> None:
-        """Rewrite one or more top-level assignments in the brick's contract."""
-        path = brick / "contract.py"
+    def definition(self, brick: Path, name: str, body: str) -> None:
+        path = brick / "contract.bend"
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        for name, value in values.items():
-            for index, line in enumerate(lines):
-                if line.startswith(f"{name}:") or line.startswith(f"{name} ="):
-                    lines[index] = f"{name} = {value}\n"
-                    break
-            else:
-                lines.append(f"{name} = {value}\n")
-        path.write_text("".join(lines), encoding="utf-8")
+        for index, line in enumerate(lines):
+            if line.startswith(f"def {name}("):
+                body_index = index + 1
+                while body_index < len(lines) and not lines[body_index].strip():
+                    body_index += 1
+                lines[body_index] = f"  {body}\n"
+                path.write_text("".join(lines), encoding="utf-8")
+                return
+        self.fail(f"missing definition {name}")
 
+    def lane(self, brick: Path, ctor: str) -> None:
+        self.definition(brick, "lane", f"{ctor}{{}}")
+
+    def dependencies(self, brick: Path, body: str) -> None:
+        self.definition(brick, "sibling_dependencies", body)
+
+    def owned(self, brick: Path, *resources: str) -> None:
+        self.definition(brick, "owned_state", repr(list(resources)).replace("'", '"'))
 
     def pure_brick(self, name: str = "example_brick") -> Path:
-        """The template with its one adapter and the evidence loader removed."""
         brick = self.brick(name)
-        (brick / "input/adapters/example_source.py").unlink()
-        (brick / "input/evidence.py").unlink()
-        self.contract(brick, LANE='"pure"')
+        self.lane(brick, "Pure")
+        (brick / "runner/run.bend").write_text(
+            "import Base\nimport ../contract.bend as Contract\n"
+            "import ../input/config.bend as Config\nimport ../src/logic.bend as Logic\n\n"
+            "def run(input: Contract.BrickInput) -> IO(Contract.BrickOutput):\n"
+            "  context = Config.run_context(0n)\n"
+            "  IO.pure(Contract.BrickOutput, Logic.execute(input, context))\n",
+            encoding="utf-8",
+        )
         return brick
 
     def errors(self) -> list[str]:
@@ -66,54 +72,166 @@ class Fixture(unittest.TestCase):
         self.assertTrue(any(fragment in item for item in errors), f"{fragment!r} not in {errors}")
 
     def assertClean(self) -> None:
-        lint = lint_bricks.lint_repo(self.root)
-        self.assertEqual(lint.errors, [])
-        self.assertEqual(lint.warnings, [])
+        result = lint_bricks.lint_repo(self.root)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.warnings, [])
 
 
 class BoilerplateTests(Fixture):
     def test_committed_boilerplate_lints_clean(self) -> None:
-        self.assertClean()
         self.assertEqual(lint_bricks.lint_repo(ROOT).errors, [])
 
     def test_fixture_copy_lints_clean(self) -> None:
         self.brick()
         self.assertClean()
 
-    def test_src_may_not_import_direct_io(self) -> None:
+    def test_missing_required_path(self) -> None:
         brick = self.brick()
-        (brick / "src/logic.py").write_text("import requests\n", encoding="utf-8")
-        self.assertError("src imports direct-I/O module 'requests'")
+        (brick / "input/config.bend").unlink()
+        self.assertError("input/config.bend: required brick path is missing")
 
-
-class LaneTests(Fixture):
-    def test_absent_lane_is_strict(self) -> None:
+    def test_python_runtime_is_rejected(self) -> None:
         brick = self.brick()
-        path = brick / "contract.py"
-        kept = [line for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
-                if not line.startswith("LANE")]
-        path.write_text("".join(kept), encoding="utf-8")
-        self.assertNotIn("LANE =", path.read_text(encoding="utf-8"))
-        lint = lint_bricks.lint_repo(self.root)
-        self.assertEqual(lint.errors, [])
-        self.assertEqual(lint_bricks.lint_contract(brick, lint).lane, "strict")
+        (brick / "src/logic.py").write_text("pass\n", encoding="utf-8")
+        self.assertError("Python runtime code is not allowed inside a Bend brick")
 
+    def test_entry_must_define_only_run(self) -> None:
+        brick = self.brick()
+        with (brick / "main.bend").open("a", encoding="utf-8") as handle:
+            handle.write("\ndef leak() -> U32:\n  0\n")
+        self.assertError("must define only the public run entry point")
+
+    def test_entry_signature_is_checked(self) -> None:
+        brick = self.brick()
+        path = brick / "main.bend"
+        path.write_text(path.read_text().replace("IO(Contract.BrickOutput)", "Contract.BrickOutput"))
+        self.assertError("return IO(Contract.BrickOutput)")
+
+
+class ContractTests(Fixture):
     def test_every_lane_has_an_enforcer(self) -> None:
-        self.assertIn("strict", lint_bricks.LANES)
-        for lane, enforcer in lint_bricks.LANES.items():
-            self.assertTrue(callable(enforcer), lane)
+        self.assertEqual(set(lint_bricks.LANES), {"strict", "pure", "workflow"})
+        self.assertTrue(all(callable(item) for item in lint_bricks.LANES.values()))
 
-    def test_declared_strict_lints_clean(self) -> None:
-        self.contract(self.brick(), LANE='"strict"')
+    def test_version_must_be_positive_literal(self) -> None:
+        self.definition(self.brick(), "contract_version", "0")
+        self.assertError("positive U32 literal")
+
+    def test_lane_must_be_literal_constructor(self) -> None:
+        self.definition(self.brick(), "lane", "choose_lane()")
+        self.assertError("lane must return Strict{}, Pure{}, or Workflow{} literally")
+
+    def test_dependencies_must_be_literal(self) -> None:
+        self.dependencies(self.brick(), "load_dependencies()")
+        self.assertError("sibling_dependencies must be a literal list")
+
+    def test_owned_state_must_be_strings(self) -> None:
+        self.definition(self.brick(), "owned_state", "[1]")
+        self.assertError("owned_state must be a literal list of non-empty strings")
+
+
+class BoundaryTests(Fixture):
+    def sibling_adapter(self, brick: Path, sibling: str) -> None:
+        (brick / f"input/adapters/{sibling}.bend").write_text(
+            f"import Base\nimport ../../../{sibling}/contract.bend as SiblingContract\n"
+            f"import ../../../{sibling}/main.bend as Sibling\n",
+            encoding="utf-8",
+        )
+
+    def test_declared_sibling_adapter_lints_clean(self) -> None:
+        owner = self.brick("owner")
+        self.brick("other")
+        self.dependencies(owner, '[Dependency{"other", Eventual{}}]')
+        self.sibling_adapter(owner, "other")
         self.assertClean()
 
-    def test_unknown_lane_is_an_error(self) -> None:
-        self.contract(self.brick(), LANE='"permissive"')
-        self.assertError("LANE must be one of")
+    def test_undeclared_sibling_is_rejected(self) -> None:
+        owner = self.brick("owner")
+        self.brick("other")
+        self.sibling_adapter(owner, "other")
+        self.assertError("sibling dependency 'other' is not declared")
 
-    def test_non_string_lane_is_an_error(self) -> None:
-        self.contract(self.brick(), LANE="1")
-        self.assertError("LANE must be one of")
+    def test_declared_but_unused_dependency_warns(self) -> None:
+        owner = self.brick("owner")
+        self.brick("other")
+        self.dependencies(owner, '[Dependency{"other", Eventual{}}]')
+        self.assertIn("declared dependency 'other' has no static adapter import", "\n".join(self.warnings()))
+
+    def test_src_may_not_import_sibling(self) -> None:
+        owner = self.brick("owner")
+        self.brick("other")
+        self.dependencies(owner, '[Dependency{"other", Eventual{}}]')
+        (owner / "src/coupled.bend").write_text(
+            "import ../../other/main.bend as Other\n", encoding="utf-8"
+        )
+        self.assertError("only an input adapter may import a sibling brick")
+
+    def test_src_may_not_perform_effects(self) -> None:
+        brick = self.brick()
+        (brick / "src/effect.bend").write_text(
+            'import Base\ndef bad() -> IO(Unit):\n  IO.print("bad")\n', encoding="utf-8"
+        )
+        self.assertError("src performs a direct effect")
+
+    def test_unsafe_and_open_todo_are_rejected(self) -> None:
+        brick = self.brick()
+        (brick / "src/bad.bend").write_text(
+            "import Base\n@unsafe def bad() -> U32:\n  ?TODO\n", encoding="utf-8"
+        )
+        self.assertError("@unsafe is forbidden")
+        self.assertError("contains an unresolved TODO")
+
+    def test_adapter_foreign_effect_needs_both_backends(self) -> None:
+        brick = self.brick()
+        adapter = brick / "input/adapters/source.bend"
+        adapter.write_text(
+            'import Base\ndef fetch() -> IO(Unit):\n  import "./fetch.c"\n',
+            encoding="utf-8",
+        )
+        (adapter.parent / "fetch.c").write_text("/* host effect */\n", encoding="utf-8")
+        self.assertError("needs paired .c and .js implementations")
+
+    def test_adapter_paired_foreign_effect_lints_clean(self) -> None:
+        brick = self.brick()
+        adapter = brick / "input/adapters/source.bend"
+        adapter.write_text(
+            'import Base\ndef fetch() -> IO(Unit):\n  import "./fetch.c"\n  import "./fetch.js"\n',
+            encoding="utf-8",
+        )
+        (adapter.parent / "fetch.c").write_text("/* host effect */\n", encoding="utf-8")
+        (adapter.parent / "fetch.js").write_text("// host effect\n", encoding="utf-8")
+        self.assertClean()
+
+
+class GraphTests(Fixture):
+    def test_duplicate_state_owner_is_rejected(self) -> None:
+        self.owned(self.brick("one"), "db:records")
+        self.owned(self.brick("two"), "db:records")
+        self.assertError("is already owned by 'one'")
+
+    def test_dependency_cycle_is_rejected(self) -> None:
+        one = self.brick("one")
+        two = self.brick("two")
+        self.dependencies(one, '[Dependency{"two", Eventual{}}]')
+        self.dependencies(two, '[Dependency{"one", Orchestrated{}}]')
+        self.sibling(one, "two")
+        self.sibling(two, "one")
+        self.assertError("sibling dependency cycle")
+
+    @staticmethod
+    def sibling(brick: Path, sibling: str) -> None:
+        (brick / f"input/adapters/{sibling}.bend").write_text(
+            f"import Base\nimport ../../../{sibling}/contract.bend as SiblingContract\n"
+            f"import ../../../{sibling}/main.bend as Sibling\n", encoding="utf-8"
+        )
+
+    def test_nothing_may_depend_on_workflow(self) -> None:
+        flow = self.brick("flow")
+        owner = self.brick("owner")
+        self.lane(flow, "Workflow")
+        self.dependencies(owner, '[Dependency{"flow", Orchestrated{}}]')
+        self.sibling(owner, "flow")
+        self.assertError("sibling dependency 'flow' is a workflow brick")
 
 
 class PureLaneTests(Fixture):
@@ -121,131 +239,51 @@ class PureLaneTests(Fixture):
         self.pure_brick()
         self.assertClean()
 
-    def test_template_is_not_pure(self) -> None:
-        # The template ships one adapter and a filesystem evidence loader:
-        # both are exactly what a pure brick gives up.
-        self.contract(self.brick(), LANE='"pure"')
+    def test_pure_brick_may_not_have_adapter(self) -> None:
+        brick = self.pure_brick()
+        (brick / "input/adapters/source.bend").write_text("import Base\n", encoding="utf-8")
         self.assertError("pure brick may not have adapters")
-        self.assertError("input/evidence.py: pure brick imports 'pathlib' outside runner/")
 
-    def test_pure_brick_may_not_declare_sibling_dependencies(self) -> None:
+    def test_pure_brick_may_not_read_clock_in_runner(self) -> None:
+        brick = self.pure_brick()
+        path = brick / "runner/run.bend"
+        path.write_text(path.read_text().replace("IO.pure", "IO.now # IO.pure"), encoding="utf-8")
+        self.assertError("pure brick may not perform effects")
+
+    def test_pure_brick_may_not_depend_on_sibling(self) -> None:
+        brick = self.pure_brick()
         self.brick("other")
-        self.contract(self.pure_brick(), SIBLING_DEPENDENCIES='{"other": "eventual"}')
+        self.dependencies(brick, '[Dependency{"other", Eventual{}}]')
         self.assertError("pure brick may not declare sibling dependencies")
-
-    def test_pure_brick_bans_direct_io_outside_runner(self) -> None:
-        brick = self.pure_brick()
-        (brick / "input/loader.py").write_text("import os\n", encoding="utf-8")
-        self.assertError("input/loader.py: pure brick imports 'os' outside runner/")
-
-    def test_pure_brick_reports_src_direct_io_once(self) -> None:
-        brick = self.pure_brick()
-        (brick / "src/helpers.py").write_text("import os\n", encoding="utf-8")
-        hits = [item for item in self.errors() if "src/helpers.py" in item]
-        self.assertEqual(hits, ["bricks/example_brick/src/helpers.py: src imports direct-I/O module 'os'"])
-
-    def test_pure_brick_bans_random_and_time_outside_runner(self) -> None:
-        brick = self.pure_brick()
-        (brick / "src/helpers.py").write_text("import random\nfrom time import sleep\n", encoding="utf-8")
-        self.assertError("pure brick imports 'random' outside runner/")
-        self.assertError("pure brick imports 'time' outside runner/")
-
-    def test_pure_brick_runner_keeps_its_io(self) -> None:
-        brick = self.pure_brick()
-        (brick / "runner/rng.py").write_text("import random\nimport pathlib\nimport time\n", encoding="utf-8")
-        self.assertClean()
-
-    def test_pure_brick_may_not_read_the_clock(self) -> None:
-        brick = self.pure_brick()
-        (brick / "src/logic.py").write_text(
-            "from datetime import datetime\n\n\ndef stamp():\n    return datetime.now()\n",
-            encoding="utf-8",
-        )
-        self.assertError("src/logic.py: pure brick reads the clock with now()")
-
-    def test_pure_brick_may_use_datetime_arithmetic(self) -> None:
-        brick = self.pure_brick()
-        (brick / "src/logic.py").write_text(
-            "from datetime import datetime, timedelta\n\n\n"
-            "def tomorrow(now: datetime) -> datetime:\n    return now + timedelta(days=1)\n",
-            encoding="utf-8",
-        )
-        self.assertClean()
-
-    def test_strict_brick_may_read_the_clock_in_src(self) -> None:
-        brick = self.brick()
-        (brick / "src/logic.py").write_text(
-            "from datetime import datetime\n\n\ndef stamp():\n    return datetime.now()\n",
-            encoding="utf-8",
-        )
-        self.assertClean()
-
-
-SMOKE = (
-    "import unittest\n\nfrom bricks.example_brick import run\n\n\n"
-    "class SmokeTest(unittest.TestCase):\n"
-    "    def test_run(self) -> None:\n"
-    "        with self.assertRaises(NotImplementedError):\n"
-    "            run({})\n"
-)
 
 
 class WorkflowLaneTests(Fixture):
-    def workflow_brick(self, name: str = "example_brick") -> Path:
-        brick = self.brick(name)
-        self.contract(brick, LANE='"workflow"')
+    def workflow(self) -> Path:
+        brick = self.brick()
+        self.lane(brick, "Workflow")
         return brick
 
-    def smoke(self, brick: Path) -> None:
+    def test_workflow_app_lints_clean(self) -> None:
+        brick = self.workflow()
+        (brick / "app.bend").write_text(
+            "import Base\nimport ./main.bend as Brick\n\ndef main() -> IO(Unit):\n  IO.print(\"ok\")\n",
+            encoding="utf-8",
+        )
+        self.assertClean()
+
+    def test_only_workflow_may_have_app(self) -> None:
+        brick = self.brick()
+        (brick / "app.bend").write_text("import Base\ndef main() -> IO(Unit):\n  IO.print(\"x\")\n")
+        self.assertError("only a workflow brick may have app.bend")
+
+    def test_smoke_programs_belong_to_workflow(self) -> None:
+        brick = self.brick()
         tests = brick / "runner/tests"
         tests.mkdir()
-        (tests / "__init__.py").write_text("", encoding="utf-8")
-        (tests / "test_smoke.py").write_text(SMOKE, encoding="utf-8")
-
-    def test_workflow_brick_lints_clean(self) -> None:
-        self.workflow_brick()
-        self.assertClean()
-
-    def test_nothing_may_depend_on_a_workflow(self) -> None:
-        self.workflow_brick("flow")
-        self.contract(self.brick("lib"), SIBLING_DEPENDENCIES='{"flow": "eventual"}')
-        self.assertError("bricks/lib/contract.py: sibling dependency 'flow' is a workflow brick")
-
-    def test_workflow_may_have_a_process_door(self) -> None:
-        brick = self.workflow_brick()
-        (brick / "__main__.py").write_text("from . import run\n\nrun({})\n", encoding="utf-8")
-        self.assertClean()
-
-    def test_process_door_may_name_the_brick_in_full(self) -> None:
-        brick = self.workflow_brick()
-        (brick / "__main__.py").write_text("from bricks.example_brick import run\n\nrun({})\n", encoding="utf-8")
-        self.assertClean()
-
-    def test_process_door_may_import_only_run(self) -> None:
-        brick = self.workflow_brick()
-        (brick / "__main__.py").write_text("from .src.logic import execute\n", encoding="utf-8")
-        self.assertError("__main__.py: __main__ may import only this brick's run")
-
-    def test_process_door_may_not_reach_a_sibling(self) -> None:
-        self.brick("other")
-        brick = self.workflow_brick()
-        (brick / "__main__.py").write_text("from bricks.other import run\n", encoding="utf-8")
-        self.assertError("__main__.py: __main__ may import only this brick's run")
-
-    def test_only_a_workflow_has_a_process_door(self) -> None:
-        brick = self.brick()
-        (brick / "__main__.py").write_text("from . import run\n", encoding="utf-8")
-        self.assertError("__main__.py: only a workflow brick may have __main__.py")
-
-    def test_smoke_tests_belong_to_workflows(self) -> None:
-        self.smoke(self.workflow_brick())
-        self.assertClean()
-
-    def test_strict_brick_may_not_carry_smoke_tests(self) -> None:
-        # Before lanes this was derived: a brick nothing depended on could carry
-        # them. Now the brick says so, or it cannot.
-        self.smoke(self.brick())
-        self.assertError("runner/tests: smoke tests belong only to workflow bricks")
+        (tests / "smoke.bend").write_text(
+            "import Base\nimport ../../main.bend as Brick\ndef main() -> IO(Unit):\n  IO.print(\"ok\")\n"
+        )
+        self.assertError("smoke programs belong only to workflow bricks")
 
 
 if __name__ == "__main__":
