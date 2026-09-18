@@ -142,16 +142,30 @@ class BendVerifierTests(unittest.TestCase):
         )
         self.assert_invalid(copy)
 
+    def test_contract_import_does_not_satisfy_executable_dependency(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/flow.py"
+        path.write_text(
+            path.read_text()
+            .replace(
+                "from bricks.example_brick import run as run_example_brick\n",
+                "from bricks.example_brick.contract import BrickInput\n",
+            )
+            .replace("    return run_example_brick(inputs)", "    return BrickInput(**inputs)"),
+            encoding="utf-8",
+        )
+        self.assert_invalid(copy)
+
     def test_undeclared_import_fails_the_bend_proof(self) -> None:
         copy = self.copy_repo()
         path = copy / "workflows/example_workflow/contract.py"
         path.write_text(path.read_text().replace('("example_brick",)', "()"), encoding="utf-8")
         self.assert_invalid(copy)
 
-    def test_external_import_is_allowed_only_in_a_brick_adapter(self) -> None:
+    def test_external_effect_is_allowed_only_in_a_brick_adapter(self) -> None:
         copy = self.copy_repo()
         (copy / "bricks/example_brick/input/adapters/source.py").write_text(
-            "import requests\n", encoding="utf-8"
+            "def read_records():\n    return open('records.json')\n", encoding="utf-8"
         )
         self.regenerate(copy)
         result = self.bend_run("PROOF.bend", cwd=copy)
@@ -186,6 +200,14 @@ class BendVerifierTests(unittest.TestCase):
         )
         (copy / "bricks/example_brick/input/adapters/source.py").write_text(
             "import requests\n", encoding="utf-8"
+        )
+        self.assert_invalid(copy)
+
+    def test_hidden_input_call_outside_adapter_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "bricks/example_brick/src/logic.py"
+        path.write_text(
+            path.read_text() + "\nimport random\nrandom.random()\n", encoding="utf-8"
         )
         self.assert_invalid(copy)
 

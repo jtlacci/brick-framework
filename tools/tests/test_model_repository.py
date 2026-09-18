@@ -78,6 +78,80 @@ class ModelTests(unittest.TestCase):
         path.write_text(path.read_text() + '\n__import__("requests")\n', encoding="utf-8")
         self.assertFalse(self.package("example_workflow").shape_valid)
 
+    def test_run_requires_exactly_one_required_input(self) -> None:
+        path = self.root / "workflows/example_workflow/flow.py"
+        original = path.read_text(encoding="utf-8")
+        signatures = (
+            "inputs: WorkflowInput, extra: object",
+            "inputs: WorkflowInput, *extra: object",
+            "inputs: WorkflowInput, *, extra: object",
+            'inputs: WorkflowInput = {"value": 0}',
+        )
+        for signature in signatures:
+            with self.subTest(signature=signature):
+                path.write_text(
+                    original.replace("inputs: WorkflowInput", signature), encoding="utf-8"
+                )
+                package = self.package("example_workflow")
+                self.assertFalse(package.shape_valid)
+                self.assertIn(
+                    "run must accept exactly one required positional input", package.issues
+                )
+        path.write_text(original, encoding="utf-8")
+
+    def test_run_must_be_synchronous_undecorated_and_unique(self) -> None:
+        path = self.root / "workflows/example_workflow/flow.py"
+        original = path.read_text(encoding="utf-8")
+        cases = (
+            (original.replace("def run(", "async def run("), "exactly one synchronous"),
+            (original.replace("def run(", "@staticmethod\ndef run("), "run may not be decorated"),
+            (original + "\n" + original[original.index("def run(") :], "exactly one synchronous"),
+        )
+        for source, issue in cases:
+            with self.subTest(issue=issue):
+                path.write_text(source, encoding="utf-8")
+                package = self.package("example_workflow")
+                self.assertFalse(package.shape_valid)
+                self.assertTrue(any(issue in item for item in package.issues), package.issues)
+        path.write_text(original, encoding="utf-8")
+
+    def test_obvious_external_calls_are_extracted_with_aliases(self) -> None:
+        path = self.root / "bricks/example_brick/src/logic.py"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + "\nimport random as rng\n"
+            + "from datetime import datetime as Clock\n"
+            + "from time import time as now\n\n"
+            + "def hidden_inputs():\n"
+            + "    open('records.json')\n"
+            + "    return rng.random(), Clock.now(), Clock.utcnow(), now()\n",
+            encoding="utf-8",
+        )
+        external = [
+            item
+            for item in self.model().imports
+            if item.source == "example_brick" and item.surface == "external"
+        ]
+        self.assertEqual(len(external), 5)
+        self.assertTrue(all(item.role == "other" for item in external))
+
+    def test_seeded_random_and_datetime_arithmetic_are_not_effects(self) -> None:
+        path = self.root / "bricks/example_brick/src/logic.py"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + "\nfrom datetime import timedelta\n"
+            + "from random import Random\n\n"
+            + "def deterministic(seed: int):\n"
+            + "    return Random(seed).random(), timedelta(seconds=seed)\n",
+            encoding="utf-8",
+        )
+        self.assertFalse(
+            any(
+                item.source == "example_brick" and item.surface == "external"
+                for item in self.model().imports
+            )
+        )
+
     def test_unknown_dependency_uses_invalid_zero_id(self) -> None:
         path = self.root / "workflows/example_workflow/contract.py"
         path.write_text(path.read_text().replace('("example_brick",)', '("missing",)'), encoding="utf-8")

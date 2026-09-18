@@ -79,14 +79,28 @@ def package_target_valid(
         package_target_valid(target, source_rank, rest)
       )
 
-def has_import(+source: U32, +target: U32, imports: List<&2, ImportEdge>) -> Bool:
+def surface_is_entry(surface: ImportSurface) -> Bool:
+  match surface:
+    case Entry{}:
+      True{}
+    case Contract{}:
+      False{}
+    case Internal{}:
+      False{}
+    case External{}:
+      False{}
+
+def has_entry_import(+source: U32, +target: U32, imports: List<&2, ImportEdge>) -> Bool:
   match imports:
     case Nil{}:
       False{}
     case ImportEdge{edge_source, edge_target, role, surface} <> rest:
       Bool.or(
-        Bool.and(U32.is_eq(source, edge_source), U32.is_eq(target, edge_target)),
-        has_import(source, target, rest)
+        Bool.and(
+          Bool.and(U32.is_eq(source, edge_source), U32.is_eq(target, edge_target)),
+          surface_is_entry(surface)
+        ),
+        has_entry_import(source, target, rest)
       )
 
 def dependencies_valid(
@@ -103,7 +117,7 @@ def dependencies_valid(
       Bool.and(
         Bool.and(
           package_target_valid(target, source_rank, packages),
-          has_import(source, target, imports)
+          has_entry_import(source, target, imports)
         ),
         dependencies_valid(source, source_rank, rest, packages, imports)
       )
@@ -196,17 +210,6 @@ def source_allows_external(+source: U32, +role: ImportRole, packages: List<&2, P
         ),
         source_allows_external(source, role, rest)
       )
-
-def surface_is_entry(surface: ImportSurface) -> Bool:
-  match surface:
-    case Entry{}:
-      True{}
-    case Contract{}:
-      False{}
-    case Internal{}:
-      False{}
-    case External{}:
-      False{}
 
 def surface_is_public(surface: ImportSurface) -> Bool:
   match surface:

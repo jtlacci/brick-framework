@@ -1,6 +1,6 @@
 # The pure lane
 
-Everything in the strict lane applies. Bend has already rejected declared dependencies and extracted external imports. You judge the semantic claim that output depends only on typed input.
+Everything in the strict lane applies. The extractor and Bend have already rejected declared dependencies and recognizable external-effect imports or calls. You judge the stronger semantic claim that output depends only on typed input; the static effect patterns are intentionally not a complete purity proof.
 
 ## What to judge
 

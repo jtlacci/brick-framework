@@ -39,15 +39,17 @@ LAWS.bend                   # one stable repository-validity law
 PROOF.bend                  # machine-checked proof over generated facts
 ```
 
-The extractor interns package and state names as numeric IDs and records:
+The extractor is the host-language linter and trusted source frontend. It validates local syntax and package shape, interns package and state names as numeric IDs, and records:
 
 - package kind, lane, dependency certificate, and required-shape result;
-- cross-package and direct-I/O import edges with their source role and target surface;
+- cross-package edges and recognizable external-effect imports or calls with their source role and target surface;
 - state ownership.
 
-Bend then verifies that package IDs and state ownership are unique, dependencies target bricks and are acyclic, pure bricks have no dependencies, declared dependencies are actually imported, cross-package imports use allowed public surfaces, external imports stay in brick adapters, and workflow state ownership is impossible.
+Bend then verifies relationships between those facts: package IDs and state ownership are unique, dependencies target bricks and are acyclic, pure bricks have no dependencies, every declared executable dependency has a public `run` import, cross-package imports use allowed public surfaces, recognizable external effects stay in strict-brick adapters, and workflow state ownership is impossible.
 
-Filesystem and Python-AST facts must be extracted because Bend cannot inspect a repository directly. The generated model is committed, and CI runs the extractor in `--check` mode so a stale model cannot be proved accidentally.
+Filesystem and Python-AST facts must be extracted because Bend cannot inspect a repository directly. Bend requires every extractor-defined shape result to be true; it does not independently rediscover those source facts. The generated model is committed, and CI runs the extractor in `--check` mode immediately before Bend so a stale or hand-edited model cannot be proved accidentally.
+
+Static checks identify common effects such as file access, clocks, module-level randomness, system randomness, and UUID generation. They are deliberately conservative rather than a complete purity proof. Semantic review and host-language tests remain responsible for hidden inputs, actual state access, consistency-policy truth, type behavior, and whether a workflow contains only composition.
 
 ## What changes when
 

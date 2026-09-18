@@ -4,9 +4,10 @@ You are reviewing one diff to a repository of domain bricks. `AGENTS.md` and
 `bricks/AGENTS.md` above are the rules; the `AGENTS.md` files of the bricks the
 diff touches follow in the payload. Read them before judging.
 
-The generated Bend architecture proof has already run. It decides the mechanical
-rules: folder shape, import direction, the public `run` surface, literal contract
-metadata, dependency direction, cycles, state ownership, and lane constraints.
+The host extractor and generated Bend architecture proof have already run. Together
+they decide the mechanical rules: the extractor validates folder shape, the public
+`run` surface, and literal contract metadata; Bend validates import and dependency
+direction, cycles, declared state ownership, and lane constraints over those facts.
 **Do not re-check any of that.** Your criteria, listed in the lane section
 below, are exactly the questions a parser cannot answer.
 

@@ -16,6 +16,49 @@ DIRECT_IO = {
     "shutil", "smtplib", "socket", "sqlite3", "subprocess", "urllib",
 }
 DYNAMIC_IMPORTS = {"importlib"}
+EXTERNAL_CALLS = {
+    "builtins.input",
+    "builtins.open",
+    "datetime.date.today",
+    "datetime.datetime.now",
+    "datetime.datetime.today",
+    "datetime.datetime.utcnow",
+    "input",
+    "open",
+    "random.betavariate",
+    "random.choice",
+    "random.choices",
+    "random.expovariate",
+    "random.gammavariate",
+    "random.gauss",
+    "random.getrandbits",
+    "random.lognormvariate",
+    "random.normalvariate",
+    "random.paretovariate",
+    "random.randbytes",
+    "random.randint",
+    "random.random",
+    "random.randrange",
+    "random.sample",
+    "random.shuffle",
+    "random.triangular",
+    "random.uniform",
+    "random.vonmisesvariate",
+    "random.weibullvariate",
+    "time.monotonic",
+    "time.monotonic_ns",
+    "time.perf_counter",
+    "time.perf_counter_ns",
+    "time.process_time",
+    "time.process_time_ns",
+    "time.thread_time",
+    "time.thread_time_ns",
+    "time.time",
+    "time.time_ns",
+    "uuid.uuid1",
+    "uuid.uuid4",
+}
+EXTERNAL_CALL_PREFIXES = ("secrets.",)
 BRICK_REQUIRED = (
     "__init__.py",
     "contract.py",
@@ -180,12 +223,28 @@ def run_signature(path: Path, package: PackageFact, input_name: str, output_name
     tree = parse(path, package)
     if tree is None:
         return
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    run = next((node for node in functions if node.name == "run"), None)
-    if run is None or not run.args.args:
-        package.invalidate(f"{path.name} must define run(inputs)")
+    runs = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "run"
+    ]
+    if len(runs) != 1 or not isinstance(runs[0], ast.FunctionDef):
+        package.invalidate(f"{path.name} must define exactly one synchronous run(inputs)")
         return
-    if annotation_name(run.args.args[0].annotation) != input_name:
+    run = runs[0]
+    positional = [*run.args.posonlyargs, *run.args.args]
+    exact_signature = (
+        len(positional) == 1
+        and not run.args.defaults
+        and run.args.vararg is None
+        and not run.args.kwonlyargs
+        and run.args.kwarg is None
+    )
+    if not exact_signature:
+        package.invalidate("run must accept exactly one required positional input")
+    if run.decorator_list:
+        package.invalidate("run may not be decorated")
+    if not positional or annotation_name(positional[0].annotation) != input_name:
         package.invalidate(f"run input must be annotated {input_name}")
     if annotation_name(run.returns) != output_name:
         package.invalidate(f"run output must be annotated {output_name}")
@@ -202,6 +261,34 @@ def import_modules(node: ast.Import | ast.ImportFrom) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
     return [node.module or ""]
+
+
+def import_aliases(tree: ast.Module) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                aliases[local] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name != "*":
+                    aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return aliases
+
+
+def qualified_name(node: ast.expr, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        owner = qualified_name(node.value, aliases)
+        return f"{owner}.{node.attr}" if owner else node.attr
+    return ""
+
+
+def is_external_call(node: ast.Call, aliases: dict[str, str]) -> bool:
+    name = qualified_name(node.func, aliases)
+    return name in EXTERNAL_CALLS or name.startswith(EXTERNAL_CALL_PREFIXES)
 
 
 def package_import(node: ast.Import | ast.ImportFrom) -> tuple[str, str] | None:
@@ -230,10 +317,13 @@ def extract_imports(package: PackageFact, root: Path) -> list[ImportFact]:
         if tree is None:
             continue
         role = package_role(package, path, root)
+        aliases = import_aliases(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in {"__import__", "exec"}:
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in {"__import__", "exec"}:
                     package.invalidate(f"{path.name}: dynamic imports cannot be modeled")
+                if is_external_call(node, aliases):
+                    facts.append(ImportFact(package.name, None, role, "external"))
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             cross = package_import(node)
