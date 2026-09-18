@@ -1,4 +1,4 @@
-# Human-owned invariants for pure workflow translation and result shaping.
+# Human-owned invariants for the example workflow's translation and result shaping.
 import Base
 import ./contract.bend as Contract
 import ./flow.bend as Flow

@@ -104,7 +104,7 @@ class BendIntegrationTests(unittest.TestCase):
                 copy,
                 ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
             )
-            proof = copy / "workflows/double_value/proof.bend"
+            proof = copy / "workflows/example_workflow/proof.bend"
             valid = proof.read_text(encoding="utf-8")
             invalid = valid.replace("  {==}\n", "  Unit{}\n", 1)
             self.assertNotEqual(invalid, valid)
@@ -138,14 +138,14 @@ class BendIntegrationTests(unittest.TestCase):
                 copy,
                 ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
             )
-            smoke = copy / "workflows/double_value/tests/smoke.bend"
+            smoke = copy / "workflows/example_workflow/tests/smoke.bend"
             valid = smoke.read_text(encoding="utf-8")
             invalid = valid.replace("U32.is_eq(value, 42)", "U32.is_eq(value, 41)")
             self.assertNotEqual(invalid, valid)
             smoke.write_text(invalid, encoding="utf-8")
 
             result = self.bend_run(
-                "workflows/double_value/tests/smoke.bend", cwd=copy
+                "workflows/example_workflow/tests/smoke.bend", cwd=copy
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("expected workflow output 42", result.stderr)

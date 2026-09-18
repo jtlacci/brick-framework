@@ -23,7 +23,7 @@ workflows/<workflow_name>/
 └── tests/*.bend          # one to three whole-use-case smoke programs
 ```
 
-`example_brick` is the compiling domain brick. `double_value` is the composition example: it sends `21` through `example_brick.run`, translates the returned value, and returns `42`. Both `example.bend` and the workflow smoke program execute that public path.
+`example_brick` is the compiling domain brick. `example_workflow` is the composition example: it sends `21` through `example_brick.run`, translates the returned value, and returns `42`. Both `example.bend` and the workflow smoke program execute that public path.
 
 ## Brick contract
 
@@ -72,8 +72,8 @@ Root `LAWS.bend` and `PROOF.bend` aggregate the laws and proofs of every brick a
 ```sh
 bend PROOF.bend
 bend bricks/example_brick/main.bend --checkup
-bend workflows/double_value/main.bend --checkup
-bend workflows/double_value/tests/smoke.bend
+bend workflows/example_workflow/main.bend --checkup
+bend workflows/example_workflow/tests/smoke.bend
 bend example.bend
 python3 tools/lint_bricks.py
 python3 tools/graph_bricks.py

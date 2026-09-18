@@ -1,4 +1,4 @@
-# Pure translations plus sequencing through declared brick entry points.
+# Example workflow translations and sequencing through declared brick entry points.
 import Base
 import ./contract.bend as Contract
 import ../../bricks/example_brick/contract.bend as ExampleContract

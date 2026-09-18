@@ -2,4 +2,4 @@
 import Base
 import ./LAWS.bend as Laws
 import ./bricks/example_brick/proof.bend as ExampleProof
-import ./workflows/double_value/proof.bend as DoubleValueProof
+import ./workflows/example_workflow/proof.bend as ExampleWorkflowProof

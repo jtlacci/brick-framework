@@ -48,11 +48,11 @@ class Fixture(unittest.TestCase):
         (self.root / "LAWS.bend").write_text("\n".join(laws) + "\n", encoding="utf-8")
         (self.root / "PROOF.bend").write_text("\n".join(proofs) + "\n", encoding="utf-8")
 
-    def workflow(self, name: str = "double_value") -> Path:
+    def workflow(self, name: str = "example_workflow") -> Path:
         if not (self.root / "bricks/example_brick").exists():
             self.brick()
         target = self.root / "workflows" / name
-        shutil.copytree(ROOT / "workflows/double_value", target)
+        shutil.copytree(ROOT / "workflows/example_workflow", target)
         self.sync_aggregators()
         return target
 
@@ -288,7 +288,7 @@ class GraphTests(Fixture):
         owner = self.brick("owner")
         self.workflow()
         (owner / "src/coupled.bend").write_text(
-            "import ../../../workflows/double_value/main.bend as Workflow\n",
+            "import ../../../workflows/example_workflow/main.bend as Workflow\n",
             encoding="utf-8",
         )
         self.assertError("brick may not import a workflow")
@@ -353,8 +353,8 @@ class WorkflowTests(Fixture):
         (self.root / "PROOF.bend").write_text(
             "import Base\nimport ./LAWS.bend as Laws\n", encoding="utf-8"
         )
-        self.assertError("must aggregate workflows/double_value/laws.bend")
-        self.assertError("must aggregate workflows/double_value/proof.bend")
+        self.assertError("must aggregate workflows/example_workflow/laws.bend")
+        self.assertError("must aggregate workflows/example_workflow/proof.bend")
 
     def test_workflow_declared_and_imported_bricks_must_match(self) -> None:
         workflow = self.workflow()
@@ -375,7 +375,7 @@ class WorkflowTests(Fixture):
     def test_workflow_may_not_import_another_workflow(self) -> None:
         workflow = self.workflow()
         other = self.root / "workflows/other"
-        shutil.copytree(ROOT / "workflows/double_value", other)
+        shutil.copytree(ROOT / "workflows/example_workflow", other)
         self.sync_aggregators()
         path = workflow / "flow.bend"
         path.write_text(

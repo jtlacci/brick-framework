@@ -1,4 +1,4 @@
-# Compiled whole-use-case smoke program through the public workflow boundary.
+# Compiled whole-use-case smoke program through the example workflow boundary.
 import Base
 import ../contract.bend as Contract
 import ../main.bend as Workflow

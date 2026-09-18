@@ -1,4 +1,4 @@
-# Machine-checked implementations of this workflow's laws.
+# Machine-checked implementations of the example workflow's laws.
 import Base
 import ./laws.bend as Laws
 

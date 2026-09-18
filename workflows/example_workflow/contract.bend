@@ -1,4 +1,4 @@
-# Typed public boundary and literal brick dependencies for this workflow.
+# Typed public boundary and literal brick dependencies for the example workflow.
 import Base
 
 type BrickDependency is Data:

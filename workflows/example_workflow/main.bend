@@ -1,4 +1,4 @@
-# The workflow's only executable entry point.
+# The example workflow's only executable entry point.
 import Base
 import ./contract.bend as Contract
 import ./flow.bend as Flow
