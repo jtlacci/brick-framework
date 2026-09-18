@@ -21,6 +21,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: require immutable framework revision
+        if: github.event_name == 'workflow_call'
+        env:
+          FRAMEWORK_REF: ${{ inputs.framework-ref }}
+        run: |
+          if [[ ! "$FRAMEWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "framework-ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           repository: jtlacci/brick-framework

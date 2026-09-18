@@ -47,6 +47,7 @@ class ToolchainWorkflowTests(unittest.TestCase):
             body = declaration.group("body")
             self.assertIn("required: true", body)
             self.assertNotIn("default:", body)
+            self.assertIn("framework-ref must be a full 40-character commit SHA", text)
 
 
 class BendIntegrationTests(unittest.TestCase):

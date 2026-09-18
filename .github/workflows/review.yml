@@ -49,6 +49,15 @@ jobs:
           # Both ends of the PR range must be present for `git diff base...head`.
           fetch-depth: 0
 
+      - name: require immutable framework revision
+        env:
+          FRAMEWORK_REF: ${{ inputs.framework-ref }}
+        run: |
+          if [[ ! "$FRAMEWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "framework-ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           repository: jtlacci/brick-framework
