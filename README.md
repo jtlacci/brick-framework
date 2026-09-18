@@ -99,7 +99,7 @@ python3 -m unittest discover -s tools/tests -t . -v
 
 The linter checks shape, contract literals, import direction, public entry signatures, lane rules, ownership, and graph cycles. The graph command renders declared dependencies as Mermaid. The Python review client remains the transport for the optional model-assisted pull-request review.
 
-Both reusable workflows require `framework-ref`. Pin the workflow `uses:` reference and `framework-ref` to the same immutable commit SHA so validation and review cannot drift onto different framework revisions.
+Both reusable workflows require a full commit SHA in `framework-ref`. The caller controls that input separately from the workflow `uses:` reference, so pin both to the same immutable commit SHA to prevent validation and review from drifting onto different framework revisions.
 
 ## Pinned Bend toolchain
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 
@@ -61,10 +62,12 @@ class BendIntegrationTests(unittest.TestCase):
                 raise RuntimeError(message)
             raise unittest.SkipTest(message)
 
-    def bend_run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def bend_run(
+        self, *arguments: str, cwd: Path = ROOT
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [self.bend, *arguments],
-            cwd=ROOT,
+            cwd=cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -84,6 +87,24 @@ class BendIntegrationTests(unittest.TestCase):
 
     def test_root_proof_checks_every_brick(self) -> None:
         self.assertEqual(self.assert_bend_ok("PROOF.bend"), "All terms check.")
+
+    def test_root_proof_rejects_an_invalid_brick_proof(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="bend-proof-gate-") as directory:
+            copy = Path(directory) / "repo"
+            shutil.copytree(
+                ROOT,
+                copy,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            )
+            proof = copy / "bricks/double_brick/proof.bend"
+            valid = proof.read_text(encoding="utf-8")
+            invalid = valid.replace("  {==}\n", "  Unit{}\n", 1)
+            self.assertNotEqual(invalid, valid)
+            proof.write_text(invalid, encoding="utf-8")
+
+            result = self.bend_run("PROOF.bend", cwd=copy)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("observed : Unit", result.stderr)
 
     def test_every_public_entry_checks_with_its_imports(self) -> None:
         entries = sorted((ROOT / "bricks").glob("*/main.bend"))
