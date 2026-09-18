@@ -15,7 +15,7 @@
 # against review/<lane>.md (the caller's own file wins over the framework's).
 # Routing is derived from brick lanes and the caller's workflows/ tree.
 #
-# Bend validation always runs first. Without an ANTHROPIC_API_KEY secret only
+# Bend architecture verification always runs first. Without an ANTHROPIC_API_KEY secret only
 # the model verdict is skipped, loudly; proof, compilation, and boundary lint
 # remain mandatory. With the secret set, "not reviewed" is a failure -- see
 # tools/review.py for the exit codes.
@@ -84,23 +84,11 @@ jobs:
           chmod +x "$RUNNER_TEMP/bend-bin/bend"
           echo "$RUNNER_TEMP/bend-bin" >> "$GITHUB_PATH"
 
-      - name: validate Bend laws, entries, and boundaries
+      - name: validate generated Bend architecture
         run: |
           test "$(bend --version)" = "bend $(cat .brick-framework/.bend-version)"
+          python3 .brick-framework/tools/model_repository.py --root . --check
           bend PROOF.bend
-          find bricks -mindepth 2 -maxdepth 2 -name main.bend -print0 |
-            while IFS= read -r -d '' entry; do
-              bend "$entry" --checkup
-            done
-          find workflows -mindepth 2 -maxdepth 2 -name main.bend -print0 |
-            while IFS= read -r -d '' entry; do
-              bend "$entry" --checkup
-            done
-          find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend' -print0 |
-            while IFS= read -r -d '' smoke; do
-              bend "$smoke"
-            done
-          python3 .brick-framework/tools/lint_bricks.py --root .
 
       # The secrets context cannot gate a job, only a step. Validation above
       # is unconditional; this output gates only the optional model review.

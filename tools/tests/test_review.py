@@ -36,25 +36,26 @@ class Fixture(unittest.TestCase):
         return target
 
     def lane(self, brick: Path, constructor: str, *, append: bool = False) -> None:
-        path = brick / "contract.bend"
+        path = brick / "contract.py"
+        value = constructor.lower()
         if append:
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(f"\ndef lane() -> Lane:\n  {constructor}{{}}\n")
+                handle.write(f"\nLANE = {value!r}\n")
             return
         text = path.read_text(encoding="utf-8")
-        text = text.replace("def lane() -> Lane:\n  Strict{}", f"def lane() -> Lane:\n  {constructor}{{}}")
+        text = text.replace('LANE = "strict"', f"LANE = {value!r}")
         path.write_text(text, encoding="utf-8")
 
 
 class RoutingTests(Fixture):
     def test_brick_of(self) -> None:
-        self.assertEqual(review.brick_of("bricks/alpha/src/logic.bend"), "alpha")
-        self.assertEqual(review.brick_of("bricks/alpha/contract.bend"), "alpha")
+        self.assertEqual(review.brick_of("bricks/alpha/src/logic.py"), "alpha")
+        self.assertEqual(review.brick_of("bricks/alpha/contract.py"), "alpha")
         self.assertIsNone(review.brick_of("bricks/AGENTS.md"))
         self.assertIsNone(review.brick_of("bricks/AGENTS.md"))
         self.assertIsNone(review.brick_of("tools/review.py"))
         self.assertIsNone(review.brick_of("README.md"))
-        self.assertEqual(review.workflow_of("workflows/send_order/flow.bend"), "send_order")
+        self.assertEqual(review.workflow_of("workflows/send_order/flow.py"), "send_order")
         self.assertIsNone(review.workflow_of("workflows/AGENTS.md"))
 
     def test_lane_is_read_from_the_contract(self) -> None:
@@ -68,9 +69,9 @@ class RoutingTests(Fixture):
 
     def test_bad_declaration_reads_as_strict(self) -> None:
         self.lane(self.brick("odd"), "Money")
-        path = self.brick("dyn") / "contract.bend"
-        path.write_text(path.read_text().replace("Strict{}", "choose_lane()"), encoding="utf-8")
-        (self.brick("broken") / "contract.bend").write_text("def lane(", encoding="utf-8")
+        path = self.brick("dyn") / "contract.py"
+        path.write_text(path.read_text().replace('LANE = "strict"', "LANE = choose_lane()"), encoding="utf-8")
+        (self.brick("broken") / "contract.py").write_text("LANE = ", encoding="utf-8")
         for name in ("odd", "dyn", "broken"):
             self.assertEqual(review.lane_of(self.root, name), "strict", name)
 
@@ -102,33 +103,34 @@ class RoutingTests(Fixture):
         self.brick("plain")
         self.lane(self.brick("calc"), "Pure")
         lanes, unrouted = review.route(self.root, [
-            "bricks/plain/src/logic.bend",
-            "bricks/calc/src/logic.bend",
-            "bricks/calc/contract.bend",
-            "workflows/send_order/flow.bend",
-            "tools/lint_bricks.py",
+            "bricks/plain/src/logic.py",
+            "bricks/calc/src/logic.py",
+            "bricks/calc/contract.py",
+            "workflows/send_order/flow.py",
+            "tools/model_repository.py",
             "bricks/AGENTS.md",
         ])
         self.assertEqual(list(lanes), list(review.lanes(self.root)))
-        self.assertEqual(lanes["strict"], ["bricks/plain/src/logic.bend"])
-        self.assertEqual(lanes["pure"], ["bricks/calc/src/logic.bend", "bricks/calc/contract.bend"])
-        self.assertEqual(lanes["workflow"], ["workflows/send_order/flow.bend"])
-        self.assertEqual(unrouted, ["tools/lint_bricks.py", "bricks/AGENTS.md"])
+        self.assertEqual(lanes["strict"], ["bricks/plain/src/logic.py"])
+        self.assertEqual(lanes["pure"], ["bricks/calc/src/logic.py", "bricks/calc/contract.py"])
+        self.assertEqual(lanes["workflow"], ["workflows/send_order/flow.py"])
+        self.assertEqual(unrouted, ["tools/model_repository.py", "bricks/AGENTS.md"])
 
     def test_brick_docs_follow_the_touched_bricks(self) -> None:
-        self.brick("plain")
+        brick = self.brick("plain")
         self.brick("other")
-        docs = review.brick_docs(self.root, ["bricks/plain/src/logic.bend", "bricks/plain/contract.bend"])
+        (brick / "AGENTS.md").write_text("# local brick rules\n", encoding="utf-8")
+        docs = review.brick_docs(self.root, ["bricks/plain/src/logic.py", "bricks/plain/contract.py"])
         self.assertEqual(
             [d.relative_to(self.root).as_posix() for d in docs],
-            ["bricks/plain/input/AGENTS.md", "bricks/plain/runner/AGENTS.md", "bricks/plain/src/AGENTS.md"],
+            ["bricks/plain/AGENTS.md"],
         )
 
     def test_workflow_docs_follow_a_touched_workflow(self) -> None:
         flow = self.root / "workflows/send_order"
         flow.mkdir()
         (flow / "AGENTS.md").write_text("# local workflow rules\n", encoding="utf-8")
-        docs = review.brick_docs(self.root, ["workflows/send_order/flow.bend"])
+        docs = review.brick_docs(self.root, ["workflows/send_order/flow.py"])
         self.assertEqual(
             [d.relative_to(self.root).as_posix() for d in docs],
             ["workflows/send_order/AGENTS.md"],
@@ -137,7 +139,7 @@ class RoutingTests(Fixture):
 
 class PromptTests(unittest.TestCase):
     def test_every_lane_has_a_prompt(self) -> None:
-        # A lane is an enforcer and a prompt. The linter's table is the list.
+        # Every derived review profile has a prompt.
         self.assertTrue((review.FRAMEWORK / review.PROMPTS / review.COMMON_PROMPT).is_file())
         for lane in review.lanes(ROOT):
             self.assertTrue(review.prompt_path(ROOT, lane).is_file(), lane)
@@ -215,7 +217,7 @@ class MemoryTests(Fixture):
 
     def test_brick_delta_reviews_again(self) -> None:
         previous = {"head": self.first, "lanes": {"strict": {"findings": []}}}
-        (self.root / "bricks/plain/src/logic.bend").write_text("def x() -> U32:\n  1\n", encoding="utf-8")
+        (self.root / "bricks/plain/src/logic.py").write_text("def x():\n    return 1\n", encoding="utf-8")
         head = self.commit("logic")
         self.assertFalse(review.carried_forward(self.root, previous, head))
 

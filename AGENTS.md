@@ -1,42 +1,22 @@
 # Repository contract
 
-This repository uses Bend 2 file boilerplate to organize one codebase as domain bricks composed by application workflows. Python is host-side repository tooling only; runtime behavior belongs in `.bend` files.
+This repository is language-neutral boilerplate for domain bricks and application workflows. Python is the example host language. Bend is a CI-only structural verifier; application behavior never belongs in Bend.
 
-## Before editing Bend
+## Boundaries
 
-- Run `bend guide` and use the installed compiler as the syntax authority.
-- Read the closest inherited `AGENTS.md` files.
-- Keep each brick and workflow's human intent in its `laws.bend` and its implementations in `proof.bend`; keep root `LAWS.bend` and `PROOF.bend` complete as aggregators.
-- Run `bend PROOF.bend` after every behavior change and before committing.
-- Use Bend parallel calls only for independent, balanced work.
+- Put domain capabilities under `bricks/` and whole-use-case composition under `workflows/`.
+- Each package exposes one typed `run(input) -> output` entry point.
+- Bricks own domain behavior, state, and external adapters.
+- Workflows translate values and sequence declared brick entry points. They own no state or external effects and do not call other workflows.
+- Cross-package access uses public entries and contracts only. Private source and runner modules are never imported across boundaries.
 
-## Terminology
+## Bend verification
 
-- The **repository boundary** separates this repository from APIs, databases, files, services, and other outside systems.
-- A **brick boundary** separates one brick from its sibling bricks.
-- A **brick entry point** is `run` in the brick's `main.bend`.
-- A **sibling adapter** imports another brick's `contract.bend` for boundary types and `main.bend` for execution, then calls only `run`.
-- A **workflow** is one application use case that translates values and sequences declared brick `run` calls without owning infrastructure or domain behavior.
+- `tools/model_repository.py` extracts filesystem, contract, and import facts without importing application code.
+- `ARCHITECTURE.bend` is generated. Never edit it by hand.
+- `verification/rules.bend` owns stable framework rules for dependencies, lanes, imports, cycles, and state ownership.
+- `LAWS.bend` and `PROOF.bend` prove the generated repository model satisfies those rules.
+- Package behavior, examples, and business invariants belong in host-language tests, not Bend laws.
+- Regenerate after architecture changes with `python3 tools/model_repository.py --write`, then run `bend PROOF.bend`.
 
-## Non-negotiable rules
-
-- Put every domain brick in its own named folder under `bricks/`.
-- Every brick has `input/`, `runner/`, and `src/` boundaries plus `main.bend` and `contract.bend`.
-- Every brick declares typed `BrickInput` and `BrickOutput` datatypes and literal version, lane, dependency, and state-ownership metadata in `contract.bend`.
-- A brick exposes contract datatypes plus the single executable entry point `run`, which returns `IO(BrickOutput)`.
-- External access crosses an input adapter; sibling access crosses a sibling adapter.
-- Every sibling dependency declares `Eventual{}` or `Orchestrated{}` consistency. Dependency cycles are forbidden.
-- Every persistent application-state resource has exactly one owning brick.
-- Bricks are repository-internal. Do not package or expose them to outside consumers.
-- Put each application use case under `workflows/`; retain one typed input, one typed output, and one public `run`.
-- Workflows may depend only on brick public contracts and entries. They perform no direct external effects and do not call other workflows.
-- State important invariants as package-owned Bend laws and keep the root proof aggregation complete.
-- Keep enforcement in `tools/lint_bricks.py` lightweight and standard-library-only.
-
-## Contract placement and precedence
-
-`AGENTS.md` rules apply to their folder and descendants. A nested file may add rules but never relax a parent rule. Add a brick-level contract only for domain-specific additions.
-
-## When to split a brick
-
-Split or reshape a brick when `run` becomes a large operation dispatcher, its adapter set is no longer easy to understand, or unrelated changes repeatedly touch the same `src/` code.
+Keep the extractor mechanical and standard-library-only. A normal brick behavior change should not change any Bend law.

@@ -1,19 +1,17 @@
 # The workflow profile
 
-A workflow is an application use case invoked as a whole. The linter has already checked its single typed entry, declared brick dependencies, import boundary, direct-effect ban, laws, proofs, and smoke-program shape. You judge whether it remains composition rather than becoming a domain brick in disguise.
+A workflow is one host-language application use case. Bend has checked its structural boundary; you judge whether it remains composition.
 
 ## What to judge
 
-Apply the semantic parts of criteria 1–8 from the strict profile, then:
+1. **Composition only.** `flow.py` translates values and sequences declared brick `run` calls. Domain rules belong in bricks. Domain behavior in the workflow blocks.
 
-9. **Composition only.** `flow.bend` sequences declared brick `run` calls and translates their typed values; it does not accumulate domain rules that belong in a brick.
+2. **Whole-operation contract.** `WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a generic dispatcher. A dispatcher is advisory unless it hides a dependency.
 
-10. **Whole-operation contract.** `WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a generic command dispatcher.
+3. **Capability isolation.** Infrastructure and external behavior remain owned by bricks. A disguised workflow effect blocks.
 
-11. **Capability isolation.** Infrastructure and external behavior remain owned by bricks. The workflow does not disguise an effect in a helper.
-
-12. **Smoke value.** Each smoke program exercises the public `run` boundary and a meaningful whole-use-case outcome. It does not merely compile or print a constant.
+4. **Host-language evidence.** Meaningful orchestration behavior is tested normally in the host language. Do not add workflow-local Bend laws or executable Bend examples.
 
 ## Severity
 
-Criteria **9–11 block**. Criterion 12 is advisory unless it exposes a blocking defect. The strict-profile severities stand for criteria 1–8.
+Criteria **1 and 3 block**. Criteria 2 and 4 are advisory unless they expose a blocking boundary defect.

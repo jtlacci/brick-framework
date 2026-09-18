@@ -4,10 +4,10 @@ You are reviewing one diff to a repository of domain bricks. `AGENTS.md` and
 `bricks/AGENTS.md` above are the rules; the `AGENTS.md` files of the bricks the
 diff touches follow in the payload. Read them before judging.
 
-`tools/lint_bricks.py` has already run. It decides everything an integer can
-decide: folder shape, Bend import direction, the public `run` surface, literal
-contract metadata, sibling dependencies, state ownership, and the extra rules of the
-lane. **Do not re-check any of that.** Your criteria, listed in the lane section
+The generated Bend architecture proof has already run. It decides the mechanical
+rules: folder shape, import direction, the public `run` surface, literal contract
+metadata, dependency direction, cycles, state ownership, and lane constraints.
+**Do not re-check any of that.** Your criteria, listed in the lane section
 below, are exactly the questions a parser cannot answer.
 
 ## Your context, and its limit
@@ -31,7 +31,7 @@ that half of a change is missing, including that a test is absent.
 boundary defect is silent: an adapter that reaches a live source while claiming
 to replay a fixture, a pure brick with a hidden input, a runner that computes,
 or a weakened law can each keep working while every sibling that trusts the
-boundary is quietly wrong. A wrong block costs the author one reply. That is the
+  boundary is quietly wrong. A wrong block costs the author one reply. That is the
 only coin this bias covers. A doubt about simplicity, naming, or code you were
 not shown is an advisory finding, not a block.
 
@@ -63,7 +63,7 @@ pull request, that is your memory, and consistency is part of correctness:
 - Do not restate what the diff does. Findings only.
 - Do not block on style, file size or file count. This repository has no
   budget and no style gate by design.
-- Do not repeat the linter. If a diff violates a rule the linter enforces, the
+- Do not repeat the Bend verifier. If a diff violates a structural rule, the
   check beside this one has already failed.
 - Cite the number of the lane criterion you are applying.
 
@@ -75,7 +75,7 @@ Emit exactly one JSON object and nothing else:
 {
   "findings": [
     {
-      "file": "bricks/orders/input/adapters/prices.bend",
+      "file": "bricks/orders/input/adapters/prices.py",
       "issue": "the replay branch falls through to the live foreign effect when its fixture is missing",
       "suggestion": "criterion 2: fail explicitly on a missing fixture; live effects must be explicit",
       "severity": "block"

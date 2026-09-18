@@ -1,4 +1,7 @@
-# Root aggregation for the human-owned laws of every brick and workflow.
+# Stable framework law. Package behavior does not belong here.
 import Base
-import ./bricks/example_brick/laws.bend as ExampleLaws
-import ./workflows/example_workflow/laws.bend as ExampleWorkflowLaws
+import ./ARCHITECTURE.bend as Architecture
+import ./verification/rules.bend as Rules
+
+law repository_obeys_framework:
+  {Rules.validate(Architecture.repository()) == True{} : Bool}

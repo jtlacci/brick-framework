@@ -1,89 +1,72 @@
-# Bend brick framework
+# Brick framework with Bend verification
 
-This repository is Bend 2 boilerplate for a codebase made of domain **bricks** and application **workflows**. Bricks own behavior, state, and external capabilities. Workflows compose brick entry points into whole use cases. Bend supplies typed execution and machine-checked laws; `bend PROOF.bend` is the repository-wide merge gate.
+This repository is language-neutral boilerplate for organizing one codebase into domain **bricks** and application **workflows**. Python demonstrates the host-language shape. Bend does not implement or execute application behavior; it verifies the repository's architecture in CI.
 
-## Structure
+The included extractor understands Python syntax. Supporting another host language means adding a small extractor frontend that emits the same Bend facts; the Bend rules and laws stay unchanged.
+
+## Runtime structure
 
 ```text
-bricks/<brick_name>/
-├── contract.bend         # BrickInput, BrickOutput, metadata
-├── main.bend             # run(input) -> IO(output)
-├── laws.bend             # human-owned invariants
-├── proof.bend            # machine-checked law implementations
-├── input/                # configuration and effect/dependency adapters
-├── runner/run.bend       # context and execution handoff
+bricks/<brick>/
+├── __init__.py           # exposes only run
+├── contract.py           # typed input/output and architecture metadata
+├── input/
+│   ├── adapters/         # external and sibling boundaries
+│   ├── data/             # reviewed examples
+│   └── config.yml
+├── runner/run.py         # one typed executable entry
 └── src/                  # private domain logic
 
-workflows/<workflow_name>/
-├── contract.bend         # WorkflowInput, WorkflowOutput, brick dependencies
-├── main.bend             # run(input) -> IO(output)
-├── flow.bend             # pure translation and brick-call sequencing
-├── laws.bend             # translation/planning invariants
-├── proof.bend            # machine-checked law implementations
-└── tests/*.bend          # one to three whole-use-case smoke programs
+workflows/<workflow>/
+├── __init__.py           # exposes only run
+├── contract.py           # WorkflowInput, WorkflowOutput, brick dependencies
+└── flow.py               # translation and brick-call sequencing
 ```
 
-`example_brick` is the compiling domain brick. `example_workflow` is the composition example: it sends `21` through `example_brick.run`, translates the returned value, and returns `42`. Both `example.bend` and the workflow smoke program execute that public path.
+Bricks own domain behavior, state, and external capabilities. Workflows own whole-use-case composition. A workflow has one input and one output, depends only on bricks, owns no state or infrastructure, and does not call another workflow.
 
-## Brick contract
+`example_brick` and `example_workflow` are host-language placeholders. Their `NotImplementedError` is intentional: this repository supplies boundaries, not a shared runtime engine.
 
-Every brick has one typed input, one typed output, and one executable entry:
+## Stable Bend verification
 
-```bend
-def run(input: Contract.BrickInput) -> IO(Contract.BrickOutput):
-  Runner.run(input)
+The verification path is separate from application code:
+
+```text
+tools/model_repository.py   # extracts facts without importing application code
+ARCHITECTURE.bend           # generated repository model
+verification/rules.bend     # stable framework validation functions
+LAWS.bend                   # one stable repository-validity law
+PROOF.bend                  # machine-checked proof over generated facts
 ```
 
-Its `contract.bend` also declares literal version, lane, sibling dependency, and state-ownership metadata. `Strict{}` is the regular lane. `Pure{}` additionally forbids adapters, sibling dependencies, foreign imports, clocks, files, networking, randomness, and other effects.
+The extractor interns package and state names as numeric IDs and records:
 
-Sibling access crosses an input adapter. The adapter may import only the sibling's `contract.bend` types and `main.bend` entry point. A sibling dependency is `Eventual{}` when independent commits and lag are acceptable, or `Orchestrated{}` when the calling brick owns sequencing and compensation. Brick dependency cycles are forbidden, and every persistent state identifier has one owner.
+- package kind, lane, dependency certificate, and required-shape result;
+- cross-package and direct-I/O import edges with their source role and target surface;
+- state ownership.
 
-## Workflow contract
+Bend then verifies that package IDs and state ownership are unique, dependencies target bricks and are acyclic, pure bricks have no dependencies, declared dependencies are actually imported, cross-package imports use allowed public surfaces, external imports stay in brick adapters, and workflow state ownership is impossible.
 
-Workflows retain the same simple call shape:
+Filesystem and Python-AST facts must be extracted because Bend cannot inspect a repository directly. The generated model is committed, and CI runs the extractor in `--check` mode so a stale model cannot be proved accidentally.
 
-```bend
-def run(input: Contract.WorkflowInput) -> IO(Contract.WorkflowOutput):
-  Flow.run(input)
-```
+## What changes when
 
-The workflow boundary has exactly one typed `WorkflowInput` and one typed `WorkflowOutput`. `contract.bend` declares a name-only list of bricks:
+| Change | Host code | `ARCHITECTURE.bend` | Bend rules/laws |
+| --- | --- | --- | --- |
+| Brick behavior | Yes | No | No |
+| Add or rewire a package | Yes | Regenerate | No |
+| Change a framework invariant | Maybe | Regenerate | Yes |
 
-```bend
-def brick_dependencies() -> List<&2, BrickDependency>:
-  [BrickDependency{"orders"}, BrickDependency{"inventory"}]
-```
+Business laws and example-specific behavior belong in ordinary host-language tests. A normal feature should not edit `LAWS.bend`, `PROOF.bend`, or `verification/rules.bend`.
 
-“Only brick dependencies” is a capability rule: a workflow may use Bend and its own pure files, but it may not reach a database, API, file, clock, environment, hub package, or foreign implementation directly. Every external capability must enter through a declared brick's public `run`. The linter requires the declared set to exactly match the brick contracts and entries imported by `flow.bend`.
-
-Workflows also may not import other workflows in v1. This keeps the graph one-way and avoids nested application flows. Shared reusable orchestration should be promoted to a domain brick with its own contract.
-
-## What workflow tests do
-
-A workflow has two complementary test layers:
-
-- `laws.bend` and `proof.bend` check pure request translation, result translation, and planning invariants without running effects.
-- `tests/*.bend` are compiled smoke programs. They import only the workflow's public contract and `main.bend`, call `run` as a whole, and make the expected use-case result observable. The framework requires one to three, keeping them focused rather than building a second test hierarchy.
-
-Root `LAWS.bend` and `PROOF.bend` aggregate the laws and proofs of every brick and workflow. The linter checks complete custody; reviewers decide whether the laws are sufficient, and Bend verifies their implementations.
-
-## Validation
+## Commands
 
 ```sh
-bend PROOF.bend
-bend bricks/example_brick/main.bend --checkup
-bend workflows/example_workflow/main.bend --checkup
-bend workflows/example_workflow/tests/smoke.bend
-bend example.bend
-python3 tools/lint_bricks.py
-python3 tools/graph_bricks.py
+python3 tools/model_repository.py --write  # after architecture changes
+python3 tools/model_repository.py --check  # drift gate
+bend PROOF.bend                            # structural proof
+python3 tools/graph_bricks.py              # Mermaid dependency graph
 python3 -m unittest discover -s tools/tests -t . -v
 ```
 
-The proof command must print `All terms check.` The smoke program and example must print `42`. The linter checks package shape, literal metadata, public signatures, import direction, effect boundaries, ownership, dependency cycles, exact workflow dependency use, and root proof aggregation. The graph command renders workflows above the bricks they compose.
-
-Python remains host-side repository tooling only because Bend 2 does not yet provide the Git, JSON, HTTP/TLS, and subprocess support needed by the optional pull-request review gate. It is not part of brick or workflow runtime behavior.
-
-## Pinned toolchain and reusable CI
-
-The repository pins Bend in `.bend-version`; CI downloads that exact release and verifies its SHA-256. Both reusable workflows require a full commit SHA in `framework-ref`. Callers should pin the workflow `uses:` reference and `framework-ref` to the same immutable revision.
+The repository pins Bend in `.bend-version`. Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so the extractor and verifier rules cannot drift independently.

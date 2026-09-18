@@ -62,33 +62,14 @@ jobs:
           fi
           test "$(bend --version)" = "bend $(cat "$pin")"
 
-      - name: check laws and imported modules
+      - name: validate generated Bend architecture
         run: |
+          if [ "${{ github.event_name }}" = workflow_call ]; then
+            python3 .brick-framework/tools/model_repository.py --root . --check
+          else
+            python3 tools/model_repository.py --root . --check
+          fi
           bend PROOF.bend
-          find bricks -mindepth 2 -maxdepth 2 -name main.bend -print0 |
-            while IFS= read -r -d '' entry; do
-              bend "$entry" --checkup
-            done
-          find workflows -mindepth 2 -maxdepth 2 -name main.bend -print0 |
-            while IFS= read -r -d '' entry; do
-              bend "$entry" --checkup
-            done
-          find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend' -print0 |
-            while IFS= read -r -d '' smoke; do
-              bend "$smoke"
-            done
-
-      - name: run framework example
-        if: github.repository == 'jtlacci/brick-framework'
-        run: test "$(bend example.bend)" = "42"
-
-      - name: lint brick boundaries
-        if: github.event_name == 'workflow_call'
-        run: python3 .brick-framework/tools/lint_bricks.py --root .
-
-      - name: lint framework brick boundaries
-        if: github.event_name != 'workflow_call'
-        run: python3 tools/lint_bricks.py --root .
 
       - name: test framework host tools
         if: github.repository == 'jtlacci/brick-framework'

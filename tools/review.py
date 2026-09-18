@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Judge one pull request's diff, one lane at a time.
 
-`tools/lint_bricks.py` decides everything an integer can decide. This is the
+The generated Bend model decides the structural rules. This is the
 other half of a review profile: a language model reads the diff it claims and
 raises findings about what a parser cannot see -- whether an adapter really
 translates, whether a `pure` brick has a hidden input, or whether a workflow
@@ -11,7 +11,7 @@ sees which paths, hands each lane exactly the context its prompt describes,
 and turns the verdict into an exit code.
 
 ROUTING IS DERIVED, NOT DECLARED. A brick path is `bricks/<name>/` and the
-brick's lane is the literal returned by `lane()` in its `contract.bend`, parsed
+brick's lane is the literal `LANE` in its `contract.py`, parsed
 and never imported. Every `workflows/<name>/` path uses the workflow profile.
 Other paths are printed as NOT REVIEWED rather than passing quietly.
 
@@ -39,9 +39,9 @@ memory, which is the state round one is defined by.
 from __future__ import annotations
 
 import json
+import ast
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import time
@@ -139,21 +139,32 @@ def lanes(root: Path) -> tuple[str, ...]:
 
 
 def lane_of(root: Path, brick: str) -> str:
-    """The lane a brick returns from `lane()` in its Bend contract. It is
+    """The literal lane in a brick's host-language contract. It is
     parsed, never imported. Missing, unparseable, or unknown reads as strict:
     routing must not fail on the very file a change may have broken, and the
-    linter is the place that rejects a bad declaration."""
-    contract = root / "bricks" / brick / "contract.bend"
+    Bend verifier is the place that rejects a bad declaration."""
+    contract = root / "bricks" / brick / "contract.py"
     try:
-        text = contract.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        tree = ast.parse(contract.read_text(encoding="utf-8"), filename=str(contract))
+    except (OSError, UnicodeDecodeError, SyntaxError):
         return STRICT
     known = lanes(root)
-    matches = re.findall(
-        r"(?ms)^def\s+lane\s*\([^\n]*\)[^\n]*:\s*\n\s+([A-Z][A-Za-z0-9_]*)\{\}",
-        text,
-    )
-    lane = matches[-1].lower() if matches else STRICT
+    lane = STRICT
+    for node in tree.body:
+        value = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "LANE" for target in node.targets
+        ):
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "LANE":
+                value = node.value
+        if value is not None:
+            try:
+                parsed = ast.literal_eval(value)
+            except (TypeError, ValueError):
+                parsed = None
+            lane = parsed if isinstance(parsed, str) else STRICT
     return lane if lane in known else STRICT
 
 

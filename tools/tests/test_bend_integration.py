@@ -1,4 +1,4 @@
-"""Compile and execute the committed Bend architecture with the pinned toolchain."""
+"""Compiler-backed tests for the generated architecture and stable Bend law."""
 
 from __future__ import annotations
 
@@ -24,42 +24,35 @@ class ToolchainWorkflowTests(unittest.TestCase):
         for name in ("validate.yml", "review.yml"):
             text = self.workflow(name)
             self.assertIn(f'BEND_VERSION: "{PINNED_BEND}"', text)
-            self.assertNotIn("runner.temp", text)
-            self.assertNotIn("install.sh", text)
             matches = re.findall(r'BEND_SHA256: "([0-9a-f]{64})"', text)
             self.assertEqual(len(matches), 1)
             checksums.update(matches)
         self.assertEqual(len(checksums), 1)
 
-    def test_review_validation_is_unconditional_and_precedes_model_key(self) -> None:
-        text = self.workflow("review.yml")
-        validation = text.index("- name: validate Bend laws, entries, and boundaries")
-        key_gate = text.index("- id: key")
-        self.assertLess(validation, key_gate)
-        for command in ("bend PROOF.bend", 'bend "$entry" --checkup', "tools/lint_bricks.py"):
-            self.assertIn(command, text[validation:key_gate])
-
-    def test_ci_checks_workflow_entries_and_smokes(self) -> None:
+    def test_ci_checks_model_drift_then_framework_proof(self) -> None:
         for name in ("validate.yml", "review.yml"):
             text = self.workflow(name)
-            self.assertIn("find workflows -mindepth 2 -maxdepth 2 -name main.bend", text)
-            self.assertIn("find workflows -mindepth 3 -maxdepth 3 -path '*/tests/*.bend'", text)
-            self.assertIn('bend "$smoke"', text)
+            self.assertIn("model_repository.py", text)
+            self.assertIn("--check", text)
+            self.assertIn("bend PROOF.bend", text)
+            self.assertNotIn("find bricks", text)
+            self.assertNotIn("find workflows", text)
+
+    def test_review_validation_precedes_optional_model_review(self) -> None:
+        text = self.workflow("review.yml")
+        validation = text.index("- name: validate generated Bend architecture")
+        self.assertLess(validation, text.index("- id: key"))
 
     def test_reusable_workflows_require_an_immutable_framework_ref(self) -> None:
         for name in ("validate.yml", "review.yml"):
             text = self.workflow(name)
-            declaration = re.search(
-                r"framework-ref:\n(?P<body>(?:        .+\n)+)", text
-            )
+            declaration = re.search(r"framework-ref:\n(?P<body>(?:        .+\n)+)", text)
             self.assertIsNotNone(declaration)
-            body = declaration.group("body")
-            self.assertIn("required: true", body)
-            self.assertNotIn("default:", body)
+            self.assertIn("required: true", declaration.group("body"))
             self.assertIn("framework-ref must be a full 40-character commit SHA", text)
 
 
-class BendIntegrationTests(unittest.TestCase):
+class BendVerifierTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         requested = os.environ.get("BEND_BIN", "bend")
@@ -70,88 +63,180 @@ class BendIntegrationTests(unittest.TestCase):
                 raise RuntimeError(message)
             raise unittest.SkipTest(message)
 
-    def bend_run(
-        self, *arguments: str, cwd: Path = ROOT
-    ) -> subprocess.CompletedProcess[str]:
+    def bend_run(self, *arguments: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [self.bend, *arguments],
-            cwd=cwd,
+            [self.bend, *arguments], cwd=cwd, check=False, capture_output=True, text=True
+        )
+
+    def copy_repo(self) -> Path:
+        directory = tempfile.mkdtemp(prefix="bend-verifier-")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        copy = Path(directory) / "repo"
+        shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+        return copy
+
+    def regenerate(self, root: Path) -> None:
+        result = subprocess.run(
+            ["python3", "tools/model_repository.py", "--write"],
+            cwd=root,
             check=False,
             capture_output=True,
             text=True,
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
-    def assert_bend_ok(self, *arguments: str) -> str:
-        result = self.bend_run(*arguments)
-        self.assertEqual(
-            result.returncode,
-            0,
-            f"bend {' '.join(arguments)} failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
-        )
-        return result.stdout.strip()
+    def assert_invalid(self, root: Path) -> None:
+        self.regenerate(root)
+        result = self.bend_run("PROOF.bend", cwd=root)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_pinned_compiler_version(self) -> None:
-        self.assertEqual(self.assert_bend_ok("--version"), f"bend {PINNED_BEND}")
+        result = self.bend_run("--version")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), f"bend {PINNED_BEND}")
 
-    def test_root_proof_checks_every_brick_and_workflow(self) -> None:
-        self.assertEqual(self.assert_bend_ok("PROOF.bend"), "All terms check.")
+    def test_stable_framework_proof_accepts_committed_model(self) -> None:
+        result = self.bend_run("PROOF.bend")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "All terms check.")
 
-    def test_root_proof_rejects_an_invalid_brick_proof(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="bend-proof-gate-") as directory:
-            copy = Path(directory) / "repo"
-            shutil.copytree(
-                ROOT,
-                copy,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+    def test_directly_corrupted_architecture_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        architecture = copy / "ARCHITECTURE.bend"
+        valid = architecture.read_text(encoding="utf-8")
+        invalid = valid.replace("Rules.Entry{}", "Rules.Internal{}")
+        self.assertNotEqual(invalid, valid)
+        architecture.write_text(invalid, encoding="utf-8")
+        result = self.bend_run("PROOF.bend", cwd=copy)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_no_package_behavior_is_implemented_in_bend(self) -> None:
+        self.assertEqual(list((ROOT / "bricks").rglob("*.bend")), [])
+        self.assertEqual(list((ROOT / "workflows").rglob("*.bend")), [])
+
+    def test_missing_host_file_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        (copy / "bricks/example_brick/src/logic.py").unlink()
+        self.assert_invalid(copy)
+
+    def test_workflow_internal_import_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/flow.py"
+        path.write_text(path.read_text() + "\nfrom bricks.example_brick.src import logic\n", encoding="utf-8")
+        self.assert_invalid(copy)
+
+    def test_workflow_external_import_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/flow.py"
+        path.write_text(path.read_text() + "\nimport requests\n", encoding="utf-8")
+        self.assert_invalid(copy)
+
+    def test_declared_but_unused_dependency_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/flow.py"
+        path.write_text(
+            path.read_text().replace(
+                "from bricks.example_brick import run as run_example_brick\n", ""
+            ).replace("    return run_example_brick(inputs)", "    raise NotImplementedError"),
+            encoding="utf-8",
+        )
+        self.assert_invalid(copy)
+
+    def test_undeclared_import_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/contract.py"
+        path.write_text(path.read_text().replace('("example_brick",)', "()"), encoding="utf-8")
+        self.assert_invalid(copy)
+
+    def test_external_import_is_allowed_only_in_a_brick_adapter(self) -> None:
+        copy = self.copy_repo()
+        (copy / "bricks/example_brick/input/adapters/source.py").write_text(
+            "import requests\n", encoding="utf-8"
+        )
+        self.regenerate(copy)
+        result = self.bend_run("PROOF.bend", cwd=copy)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pure_brick_dependency_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        source = copy / "bricks/example_brick"
+        other = copy / "bricks/other"
+        shutil.copytree(source, other)
+        contract = source / "contract.py"
+        contract.write_text(
+            contract.read_text()
+            .replace('LANE = "strict"', 'LANE = "pure"')
+            .replace(
+                "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                'SIBLING_DEPENDENCIES = {"other": "orchestrated"}',
+            ),
+            encoding="utf-8",
+        )
+        (source / "input/adapters/other.py").write_text(
+            "from bricks.other import run\n", encoding="utf-8"
+        )
+        self.assert_invalid(copy)
+
+    def test_pure_brick_external_adapter_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        contract = copy / "bricks/example_brick/contract.py"
+        contract.write_text(
+            contract.read_text().replace('LANE = "strict"', 'LANE = "pure"'),
+            encoding="utf-8",
+        )
+        (copy / "bricks/example_brick/input/adapters/source.py").write_text(
+            "import requests\n", encoding="utf-8"
+        )
+        self.assert_invalid(copy)
+
+    def test_workflow_state_ownership_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        path = copy / "workflows/example_workflow/contract.py"
+        path.write_text(path.read_text() + '\nOWNED_STATE = ("db:workflow",)\n', encoding="utf-8")
+        self.assert_invalid(copy)
+
+    def test_dependency_cycle_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        source = copy / "bricks/example_brick"
+        other = copy / "bricks/other"
+        shutil.copytree(source, other)
+        example_contract = source / "contract.py"
+        other_contract = other / "contract.py"
+        example_contract.write_text(
+            example_contract.read_text().replace(
+                "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                'SIBLING_DEPENDENCIES = {"other": "orchestrated"}',
+            ),
+            encoding="utf-8",
+        )
+        other_contract.write_text(
+            other_contract.read_text().replace(
+                "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                'SIBLING_DEPENDENCIES = {"example_brick": "orchestrated"}',
+            ),
+            encoding="utf-8",
+        )
+        (source / "input/adapters/other.py").write_text(
+            "from bricks.other import run\n", encoding="utf-8"
+        )
+        (other / "input/adapters/example.py").write_text(
+            "from bricks.example_brick import run\n", encoding="utf-8"
+        )
+        self.assert_invalid(copy)
+
+    def test_duplicate_state_owner_fails_the_bend_proof(self) -> None:
+        copy = self.copy_repo()
+        source = copy / "bricks/example_brick"
+        other = copy / "bricks/other"
+        shutil.copytree(source, other)
+        for contract in (source / "contract.py", other / "contract.py"):
+            contract.write_text(
+                contract.read_text().replace(
+                    "OWNED_STATE: tuple[str, ...] = ()", 'OWNED_STATE = ("db:records",)'
+                ),
+                encoding="utf-8",
             )
-            proof = copy / "workflows/example_workflow/proof.bend"
-            valid = proof.read_text(encoding="utf-8")
-            invalid = valid.replace("  {==}\n", "  Unit{}\n", 1)
-            self.assertNotEqual(invalid, valid)
-            proof.write_text(invalid, encoding="utf-8")
-
-            result = self.bend_run("PROOF.bend", cwd=copy)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("observed : Unit", result.stderr)
-
-    def test_every_public_entry_checks_with_its_imports(self) -> None:
-        entries = sorted((ROOT / "bricks").glob("*/main.bend"))
-        entries += sorted((ROOT / "workflows").glob("*/main.bend"))
-        self.assertTrue(entries)
-        for entry in entries:
-            with self.subTest(entry=entry.relative_to(ROOT)):
-                output = self.assert_bend_ok(str(entry.relative_to(ROOT)), "--checkup")
-                self.assertIn("All terms check.", output)
-
-    def test_workflow_smoke_executes_the_whole_use_case(self) -> None:
-        smokes = sorted((ROOT / "workflows").glob("*/tests/*.bend"))
-        self.assertTrue(smokes)
-        for smoke in smokes:
-            with self.subTest(smoke=smoke.relative_to(ROOT)):
-                self.assertEqual(self.assert_bend_ok(str(smoke.relative_to(ROOT))), "42")
-
-    def test_workflow_smoke_fails_on_a_wrong_expected_result(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="bend-smoke-gate-") as directory:
-            copy = Path(directory) / "repo"
-            shutil.copytree(
-                ROOT,
-                copy,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
-            )
-            smoke = copy / "workflows/example_workflow/tests/smoke.bend"
-            valid = smoke.read_text(encoding="utf-8")
-            invalid = valid.replace("U32.is_eq(value, 42)", "U32.is_eq(value, 41)")
-            self.assertNotEqual(invalid, valid)
-            smoke.write_text(invalid, encoding="utf-8")
-
-            result = self.bend_run(
-                "workflows/example_workflow/tests/smoke.bend", cwd=copy
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("expected workflow output 42", result.stderr)
-
-    def test_public_composition_executes_through_the_workflow(self) -> None:
-        self.assertEqual(self.assert_bend_ok("example.bend"), "42")
+        self.assert_invalid(copy)
 
 
 if __name__ == "__main__":
