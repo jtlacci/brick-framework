@@ -135,6 +135,7 @@ class ModelTests(unittest.TestCase):
         ]
         self.assertEqual(len(external), 5)
         self.assertTrue(all(item.role == "other" for item in external))
+        self.assert_invalid("external capability is allowed only")
 
     def test_seeded_random_and_datetime_arithmetic_are_not_effects(self) -> None:
         path = self.root / "bricks/example_brick/src/logic.py"

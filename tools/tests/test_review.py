@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -267,6 +268,11 @@ class JevContractTests(Fixture):
         criteria = review.policy_criteria(ROOT, "pure")
         self.assertEqual(set(review.jev_questions(criteria)), {item.id for item in criteria})
 
+    def test_oversized_state_fails_closed_without_truncation(self) -> None:
+        criteria = review.policy_criteria(ROOT, "workflow")
+        with self.assertRaisesRegex(review.JevError, "Split the pull request"):
+            review.jev_payload({"diff": "x" * (review.MAX_STATE_BYTES + 1)}, criteria)
+
     def test_judge_uses_injected_transport_and_maps_block(self) -> None:
         self.brick("plain")
         seen: list[dict] = []
@@ -396,3 +402,35 @@ class JevContractTests(Fixture):
 
         with self.assertRaisesRegex(review.JevError, "malformed JSON"):
             review._http_post({}, "secret", lambda *_args, **_kwargs: Response())
+
+    def test_missing_key_is_a_nonzero_process_exit_when_a_lane_changed(self) -> None:
+        repo = Path(tempfile.mkdtemp(prefix="brick-review-process-"))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        shutil.copytree(
+            ROOT,
+            repo,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+        )
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "start")
+        path = repo / "bricks/example_brick/src/logic.py"
+        path.write_text(path.read_text() + "\n# changed\n", encoding="utf-8")
+        environment = dict(os.environ)
+        environment.pop("TYPESAFE_API_KEY", None)
+        environment.pop("GITHUB_ACTIONS", None)
+        result = subprocess.run(
+            ["python3", str(ROOT / "tools/review.py")],
+            cwd=repo,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, review.EXIT_NOT_REVIEWED, result.stdout + result.stderr)
+        self.assertIn("NOT REVIEWED", result.stderr)

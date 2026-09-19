@@ -28,6 +28,10 @@ class ToolchainWorkflowTests(unittest.TestCase):
         self.assertIn(".brick-framework/tools/review.py", text)
         self.assertNotIn("ANTHROPIC", text)
         self.assertNotIn("npm ", text)
+        self.assertLess(
+            text.index(".brick-framework/tools/model_repository.py"),
+            text.index(".brick-framework/tools/review.py"),
+        )
 
     def test_reusable_workflows_require_an_immutable_framework_ref(self) -> None:
         for name in ("validate.yml", "review.yml"):

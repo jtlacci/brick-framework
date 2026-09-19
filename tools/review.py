@@ -34,6 +34,7 @@ JEV_MODEL = "jev-1.13.0"
 JEV_TIMEOUT_S = 30
 JEV_RETRIES = 3
 JEV_BACKOFF_S = 2
+MAX_STATE_BYTES = 90_000
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -250,6 +251,12 @@ def jev_questions(criteria: list[PolicyCriterion]) -> dict[str, dict]:
 
 
 def jev_payload(state: dict, criteria: list[PolicyCriterion]) -> dict:
+    state_bytes = len(json.dumps(state, ensure_ascii=False).encode("utf-8"))
+    if state_bytes > MAX_STATE_BYTES:
+        raise JevError(
+            f"review state is {state_bytes} bytes; maximum is {MAX_STATE_BYTES}. "
+            "Split the pull request so every criterion sees the complete diff."
+        )
     return {"model": JEV_MODEL, "state": state, "questions": jev_questions(criteria)}
 
 
