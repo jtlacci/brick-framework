@@ -16,6 +16,31 @@ DIRECT_IO = {
     "shutil", "smtplib", "socket", "sqlite3", "subprocess", "urllib",
 }
 DYNAMIC_IMPORTS = {"importlib"}
+SAFE_MODULES = {
+    "__future__",
+    "builtins",
+    "collections",
+    "copy",
+    "dataclasses",
+    "datetime",
+    "decimal",
+    "enum",
+    "fractions",
+    "functools",
+    "itertools",
+    "json",
+    "math",
+    "operator",
+    "random",
+    "re",
+    "secrets",
+    "statistics",
+    "string",
+    "time",
+    "types",
+    "typing",
+    "uuid",
+}
 EXTERNAL_CALLS = {
     "builtins.input",
     "builtins.open",
@@ -291,23 +316,45 @@ def is_external_call(node: ast.Call, aliases: dict[str, str]) -> bool:
     return name in EXTERNAL_CALLS or name.startswith(EXTERNAL_CALL_PREFIXES)
 
 
-def package_import(node: ast.Import | ast.ImportFrom) -> tuple[str, str] | None:
+def resolved_modules(
+    node: ast.Import | ast.ImportFrom,
+    package: PackageFact,
+    path: Path,
+    root: Path,
+) -> list[str] | None:
+    """Return absolute import modules, resolving relative imports from this file."""
+    if isinstance(node, ast.Import) or node.level == 0:
+        return import_modules(node)
+
+    relative = path.relative_to(root)
+    namespace = "bricks" if package.kind == "brick" else "workflows"
+    current = [namespace, package.name, *relative.parent.parts]
+    if relative.name == "__init__.py":
+        current = [namespace, package.name, *relative.parent.parts]
+    ascend = node.level - 1
+    if ascend >= len(current):
+        return None
+    base = current[: len(current) - ascend]
+    suffix = (node.module or "").split(".") if node.module else []
+    return [".".join([*base, *suffix])]
+
+
+def package_import(
+    node: ast.Import | ast.ImportFrom, module: str
+) -> tuple[str, str] | None:
     """Return target package and public/internal surface for a cross-package import."""
-    modules = import_modules(node)
-    for module in modules:
-        parts = module.split(".")
-        if len(parts) < 2 or parts[0] not in {"bricks", "workflows"}:
-            continue
-        target = parts[1]
-        if not isinstance(node, ast.ImportFrom):
-            return target, "internal"
-        names = [alias.name for alias in node.names]
-        if len(parts) == 2 and names == ["run"]:
-            return target, "entry"
-        if len(parts) == 3 and parts[2] == "contract":
-            return target, "contract"
+    parts = module.split(".")
+    if len(parts) < 2 or parts[0] not in {"bricks", "workflows"}:
+        return None
+    target = parts[1]
+    if not isinstance(node, ast.ImportFrom):
         return target, "internal"
-    return None
+    names = [alias.name for alias in node.names]
+    if len(parts) == 2 and names == ["run"]:
+        return target, "entry"
+    if len(parts) == 3 and parts[2] == "contract":
+        return target, "contract"
+    return target, "internal"
 
 
 def extract_imports(package: PackageFact, root: Path) -> list[ImportFact]:
@@ -326,18 +373,26 @@ def extract_imports(package: PackageFact, root: Path) -> list[ImportFact]:
                     facts.append(ImportFact(package.name, None, role, "external"))
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
-            cross = package_import(node)
-            if cross is not None:
-                target, surface = cross
-                if target != package.name:
-                    facts.append(ImportFact(package.name, target, role, surface))
+            modules = resolved_modules(node, package, path, root)
+            if modules is None:
+                package.invalidate(f"{path.name}: relative import escapes its package namespace")
                 continue
-            for module in import_modules(node):
+            for module in modules:
+                cross = package_import(node, module)
+                if cross is not None:
+                    target, surface = cross
+                    if target != package.name:
+                        facts.append(ImportFact(package.name, target, role, surface))
+                    continue
                 top = module.split(".", 1)[0]
                 if top in DYNAMIC_IMPORTS:
                     package.invalidate(f"{path.name}: dynamic imports cannot be modeled")
                     continue
                 if top in DIRECT_IO:
+                    facts.append(ImportFact(package.name, None, role, "external"))
+                elif top not in SAFE_MODULES:
+                    # Fail closed: anything not explicitly known to be a pure
+                    # library is an external capability and must cross an adapter.
                     facts.append(ImportFact(package.name, None, role, "external"))
     return facts
 
@@ -397,6 +452,100 @@ def build_model(root: Path) -> RepositoryModel:
     packages.sort(key=lambda package: package.name)
     imports.sort(key=lambda item: (item.source, item.target or "", item.role, item.surface))
     return RepositoryModel(packages, imports, dependency_ranks(packages))
+
+
+def validation_errors(model: RepositoryModel) -> list[str]:
+    """Validate the complete repository model without executing application code."""
+    errors: list[str] = []
+    by_name: dict[str, PackageFact] = {}
+    for package in model.packages:
+        if package.name in by_name:
+            errors.append(f"package name {package.name!r} is used more than once")
+        else:
+            by_name[package.name] = package
+        errors.extend(f"{package.kind} {package.name}: {issue}" for issue in package.issues)
+
+    imports_by_pair = {
+        (edge.source, edge.target)
+        for edge in model.imports
+        if edge.target is not None and edge.surface == "entry"
+    }
+    for package in model.packages:
+        if package.lane == "pure" and package.dependencies:
+            errors.append(f"pure brick {package.name}: may not declare dependencies")
+        for target_name in package.dependencies:
+            target = by_name.get(target_name)
+            if target is None:
+                errors.append(f"{package.kind} {package.name}: unknown dependency {target_name!r}")
+                continue
+            if target.kind != "brick":
+                errors.append(
+                    f"{package.kind} {package.name}: dependency {target_name!r} is not a brick"
+                )
+            if model.ranks[target_name] >= model.ranks[package.name]:
+                errors.append(
+                    f"{package.kind} {package.name}: dependency {target_name!r} creates a cycle"
+                )
+            if (package.name, target_name) not in imports_by_pair:
+                errors.append(
+                    f"{package.kind} {package.name}: dependency {target_name!r} "
+                    "has no public run import"
+                )
+
+    for edge in model.imports:
+        source = by_name.get(edge.source)
+        if source is None:
+            errors.append(f"import has unknown source {edge.source!r}")
+            continue
+        if edge.surface == "external":
+            if not (
+                source.kind == "brick"
+                and source.lane == "strict"
+                and edge.role == "adapter"
+            ):
+                errors.append(
+                    f"{source.kind} {source.name}: external capability is allowed only "
+                    "in a strict brick adapter"
+                )
+            continue
+
+        target = by_name.get(edge.target or "")
+        if target is None:
+            errors.append(
+                f"{source.kind} {source.name}: import targets unknown package {edge.target!r}"
+            )
+            continue
+        if target.kind != "brick":
+            errors.append(
+                f"{source.kind} {source.name}: may import only bricks, not {target.kind} {target.name}"
+            )
+        if target.name not in source.dependencies:
+            errors.append(
+                f"{source.kind} {source.name}: import of {target.name!r} is not declared"
+            )
+        if source.kind == "brick":
+            allowed = edge.role == "adapter" and edge.surface == "entry"
+        else:
+            allowed = edge.role == "flow" and edge.surface in {"entry", "contract"}
+        if not allowed:
+            errors.append(
+                f"{source.kind} {source.name}: {edge.role} may not import "
+                f"{edge.surface} surface of {target.name}"
+            )
+
+    owners: dict[str, str] = {}
+    for package in model.packages:
+        if package.kind == "workflow" and package.owned_state:
+            errors.append(f"workflow {package.name}: may not own state")
+        for resource in package.owned_state:
+            if resource in owners:
+                errors.append(
+                    f"state {resource!r} is owned by both {owners[resource]!r} "
+                    f"and {package.name!r}"
+                )
+            else:
+                owners[resource] = package.name
+    return errors
 
 
 def bend_bool(value: bool) -> str:

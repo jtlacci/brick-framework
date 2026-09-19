@@ -32,6 +32,16 @@ class ModelTests(unittest.TestCase):
     def package(self, name: str) -> model_repository.PackageFact:
         return next(item for item in self.model().packages if item.name == name)
 
+    def errors(self) -> list[str]:
+        return model_repository.validation_errors(self.model())
+
+    def assert_invalid(self, fragment: str) -> None:
+        errors = self.errors()
+        self.assertTrue(any(fragment in error for error in errors), errors)
+
+    def test_example_repository_is_structurally_valid(self) -> None:
+        self.assertEqual(self.errors(), [])
+
     def test_committed_model_matches_source(self) -> None:
         expected = model_repository.render(model_repository.build_model(ROOT))
         self.assertEqual((ROOT / "ARCHITECTURE.bend").read_text(encoding="utf-8"), expected)
@@ -60,6 +70,7 @@ class ModelTests(unittest.TestCase):
             model_repository.ImportFact("example_workflow", "example_brick", "flow", "internal"),
             self.model().imports,
         )
+        self.assert_invalid("flow may not import internal surface")
 
     def test_workflow_external_import_is_extracted_for_bend_to_reject(self) -> None:
         path = self.root / "workflows/example_workflow/flow.py"
@@ -68,6 +79,7 @@ class ModelTests(unittest.TestCase):
             model_repository.ImportFact("example_workflow", None, "flow", "external"),
             self.model().imports,
         )
+        self.assert_invalid("external capability is allowed only")
 
     def test_package_local_bend_code_becomes_false_shape_fact(self) -> None:
         (self.root / "bricks/example_brick/behavior.bend").write_text("def run():\n  Unit{}\n")
@@ -156,6 +168,117 @@ class ModelTests(unittest.TestCase):
         path = self.root / "workflows/example_workflow/contract.py"
         path.write_text(path.read_text().replace('("example_brick",)', '("missing",)'), encoding="utf-8")
         self.assertIn("[0]", model_repository.render(self.model()))
+        self.assert_invalid("unknown dependency 'missing'")
+
+    def test_declared_dependency_requires_public_run_import(self) -> None:
+        path = self.root / "workflows/example_workflow/flow.py"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            .replace(
+                "from bricks.example_brick import run as run_example_brick\n",
+                "from bricks.example_brick.contract import BrickInput\n",
+            )
+            .replace("return run_example_brick(inputs)", "return BrickInput(**inputs)"),
+            encoding="utf-8",
+        )
+        self.assert_invalid("has no public run import")
+
+    def test_undeclared_dependency_import_is_invalid(self) -> None:
+        contract = self.root / "workflows/example_workflow/contract.py"
+        contract.write_text(
+            contract.read_text(encoding="utf-8").replace(
+                '("example_brick",)', "()"
+            ),
+            encoding="utf-8",
+        )
+        self.assert_invalid("import of 'example_brick' is not declared")
+
+    def test_unknown_library_is_an_external_capability(self) -> None:
+        path = self.root / "workflows/example_workflow/flow.py"
+        path.write_text(path.read_text() + "\nimport acme_cloud_sdk\n", encoding="utf-8")
+        self.assert_invalid("external capability is allowed only")
+
+    def test_relative_sibling_import_is_resolved(self) -> None:
+        source = self.root / "bricks/example_brick"
+        other = self.root / "bricks/other"
+        shutil.copytree(source, other)
+        contract = source / "contract.py"
+        contract.write_text(
+            contract.read_text().replace(
+                "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                'SIBLING_DEPENDENCIES = {"other": "orchestrated"}',
+            ),
+            encoding="utf-8",
+        )
+        (source / "input/adapters/other.py").write_text(
+            "from ....other import run\n", encoding="utf-8"
+        )
+        self.assertIn(
+            model_repository.ImportFact("example_brick", "other", "adapter", "entry"),
+            self.model().imports,
+        )
+        self.assertEqual(self.errors(), [])
+
+    def test_pure_brick_rejects_dependencies_and_external_effects(self) -> None:
+        source = self.root / "bricks/example_brick"
+        other = self.root / "bricks/other"
+        shutil.copytree(source, other)
+        contract = source / "contract.py"
+        contract.write_text(
+            contract.read_text()
+            .replace('LANE = "strict"', 'LANE = "pure"')
+            .replace(
+                "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                'SIBLING_DEPENDENCIES = {"other": "orchestrated"}',
+            ),
+            encoding="utf-8",
+        )
+        (source / "input/adapters/other.py").write_text(
+            "from bricks.other import run\nimport requests\n", encoding="utf-8"
+        )
+        self.assert_invalid("pure brick example_brick: may not declare dependencies")
+        self.assert_invalid("external capability is allowed only")
+
+    def test_workflow_state_is_invalid(self) -> None:
+        contract = self.root / "workflows/example_workflow/contract.py"
+        contract.write_text(
+            contract.read_text() + '\nOWNED_STATE = ("db:workflow",)\n', encoding="utf-8"
+        )
+        self.assert_invalid("workflow example_workflow: may not own state")
+
+    def test_dependency_cycle_is_invalid(self) -> None:
+        source = self.root / "bricks/example_brick"
+        other = self.root / "bricks/other"
+        shutil.copytree(source, other)
+        for path, dependency in (
+            (source, "other"),
+            (other, "example_brick"),
+        ):
+            contract = path / "contract.py"
+            contract.write_text(
+                contract.read_text().replace(
+                    "SIBLING_DEPENDENCIES: dict[str, str] = {}",
+                    f'SIBLING_DEPENDENCIES = {{"{dependency}": "orchestrated"}}',
+                ),
+                encoding="utf-8",
+            )
+            (path / f"input/adapters/{dependency}.py").write_text(
+                f"from bricks.{dependency} import run\n", encoding="utf-8"
+            )
+        self.assert_invalid("creates a cycle")
+
+    def test_duplicate_state_owner_is_invalid(self) -> None:
+        source = self.root / "bricks/example_brick"
+        other = self.root / "bricks/other"
+        shutil.copytree(source, other)
+        for contract in (source / "contract.py", other / "contract.py"):
+            contract.write_text(
+                contract.read_text().replace(
+                    "OWNED_STATE: tuple[str, ...] = ()", 'OWNED_STATE = ("db:records",)'
+                ),
+                encoding="utf-8",
+            )
+        self.assert_invalid("is owned by both")
 
     def test_check_detects_model_drift(self) -> None:
         path = self.root / "workflows/example_workflow/contract.py"
