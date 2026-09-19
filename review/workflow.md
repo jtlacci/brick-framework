@@ -1,17 +1,30 @@
-# The workflow profile
+# Workflow semantic policy
 
-A workflow is one host-language application use case. Bend has checked its structural boundary; you judge whether it remains composition.
+### workflow-1: The workflow contains composition only
 
-## What to judge
+Outcomes: pass, block
 
-1. **Composition only.** `flow.py` translates values and sequences declared brick `run` calls. Domain rules belong in bricks. Domain behavior in the workflow blocks.
+`flow.py` translates values and sequences declared brick `run` calls. Domain
+rules belong in bricks; domain behavior in the workflow blocks.
 
-2. **Whole-operation contract.** `WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a generic dispatcher. A dispatcher is advisory unless it hides a dependency.
+### workflow-2: The contract describes one whole operation
 
-3. **Capability isolation.** Infrastructure and external behavior remain owned by bricks. A disguised workflow effect blocks.
+Outcomes: pass, advisory, block
 
-4. **Host-language evidence.** Meaningful orchestration behavior is tested normally in the host language. Do not add workflow-local Bend laws or executable Bend examples.
+`WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a
+generic dispatcher. A dispatcher is advisory unless it hides a dependency or
+boundary, which blocks.
 
-## Severity
+### workflow-3: Capabilities remain isolated in bricks
 
-Criteria **1 and 3 block**. Criteria 2 and 4 are advisory unless they expose a blocking boundary defect.
+Outcomes: pass, block
+
+Infrastructure and external behavior remain owned by bricks. A disguised
+workflow effect blocks.
+
+### workflow-4: Meaningful orchestration has host-language evidence
+
+Outcomes: pass, advisory
+
+Meaningful sequencing, translation, and failure behavior should be covered by
+ordinary host-language tests. Missing high-value coverage is advisory.

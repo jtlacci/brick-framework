@@ -19,4 +19,4 @@ Each direct child of `bricks/` owns one domain capability.
 - `strict` is the regular lane. `pure` declares no dependencies or external adapters.
 - Bricks never import workflows.
 
-Use normal host-language tests for behavior. Do not add package-local Bend files or proofs.
+Use normal host-language tests for behavior.

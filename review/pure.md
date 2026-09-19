@@ -1,17 +1,27 @@
-# The pure lane
+# Pure brick semantic policy
 
-Everything in the strict lane applies. The extractor and Bend have already rejected declared dependencies and recognizable external-effect imports or calls. You judge the stronger semantic claim that output depends only on typed input; the static effect patterns are intentionally not a complete purity proof.
+Pure bricks inherit every `strict-*` criterion and add the criteria below. The
+linter has already rejected declared dependencies and recognizable effects;
+these questions cover the stronger semantic claim that output depends only on
+typed input.
 
-## What to judge
+### pure-1: There are no hidden inputs
 
-Apply the strict criteria, then:
+Outcomes: pass, block
 
-7. **No hidden inputs.** Configuration, clocks, randomness, mutable globals, or captured state that changes the result without appearing in `BrickInput` blocks.
+Configuration, clocks, randomness, mutable globals, or captured state that can
+change the result without appearing in `BrickInput` block.
 
-8. **No semantic nondeterminism.** The same input must produce the same output. Scheduling-only differences are advisory; result differences block.
+### pure-2: Results are deterministic
 
-9. **No purity by relocation.** Reading an effect in the runner and passing it into pure-looking private logic is still an effect. Block.
+Outcomes: pass, advisory, block
 
-## Severity
+The same input produces the same output. Scheduling-only differences are
+advisory; result differences block.
 
-Criteria **7 and 9 block**. Criterion 8 blocks when output can differ.
+### pure-3: Purity is not manufactured by relocation
+
+Outcomes: pass, block
+
+Reading an effect in the runner and passing it into pure-looking private logic
+is still an effect and blocks.

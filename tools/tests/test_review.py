@@ -1,8 +1,4 @@
-"""The deterministic half of the review gate: routing, memory, exit rules.
-
-The model half is exercised only in CI. Everything here runs without the
-`anthropic` package and without a network.
-"""
+"""Routing, memory, policy parsing, and Jev wire-contract tests."""
 
 from __future__ import annotations
 
@@ -10,7 +6,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 from tools import review
 
@@ -148,6 +146,24 @@ class PromptTests(unittest.TestCase):
         for doc in review.CONTEXT_DOCS:
             self.assertTrue((ROOT / doc).is_file(), doc)
 
+    def test_every_policy_has_unique_stable_criteria(self) -> None:
+        expected = {
+            "strict": {f"strict-{index}" for index in range(1, 7)},
+            "pure": {
+                *(f"strict-{index}" for index in range(1, 7)),
+                *(f"pure-{index}" for index in range(1, 4)),
+            },
+            "workflow": {f"workflow-{index}" for index in range(1, 5)},
+        }
+        for lane, ids in expected.items():
+            criteria = review.policy_criteria(ROOT, lane)
+            self.assertEqual({criterion.id for criterion in criteria}, ids)
+            self.assertEqual(len(criteria), len(ids))
+
+    def test_policy_without_delimited_criteria_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no policy criteria"):
+            review.parse_criteria("# prose only\n", "custom.md")
+
 
 class VerdictTests(unittest.TestCase):
     def test_blocks_only_on_a_block_finding(self) -> None:
@@ -171,13 +187,13 @@ class EnvironmentTests(unittest.TestCase):
     def test_ci_needs_a_key(self) -> None:
         message = review.ci_misconfigured(
             {"GITHUB_ACTIONS": "true", "BASE_SHA": "a", "HEAD_SHA": "b"})
-        self.assertIn("ANTHROPIC_API_KEY", message)
+        self.assertIn("TYPESAFE_API_KEY", message)
         self.assertIn("not a review", message)
 
     def test_ci_fully_configured(self) -> None:
         self.assertIsNone(review.ci_misconfigured(
             {"GITHUB_ACTIONS": "true", "BASE_SHA": "a", "HEAD_SHA": "b",
-             "ANTHROPIC_API_KEY": "k"}))
+             "TYPESAFE_API_KEY": "k"}))
 
     def test_diff_range(self) -> None:
         self.assertEqual(review.diff_range("a", "b"), ["a...b"])
@@ -224,3 +240,159 @@ class MemoryTests(Fixture):
     def test_unknown_sha_reviews_again(self) -> None:
         previous = {"head": "0" * 40, "lanes": {"strict": {"findings": []}}}
         self.assertFalse(review.carried_forward(self.root, previous, self.first))
+
+
+class JevContractTests(Fixture):
+    @staticmethod
+    def response_for(questions: dict, choice: str = "pass") -> dict:
+        answers = {}
+        for criterion_id, question in questions.items():
+            options = list(question["criteria"])
+            selected = choice if choice in options else "pass"
+            probabilities = {option: 0.0 for option in options}
+            probabilities[selected] = 1.0
+            answers[criterion_id] = {
+                "type": "choice",
+                "choice": selected,
+                "probabilities": probabilities,
+                "confidence": 1.0,
+            }
+        return {
+            "model": review.JEV_MODEL,
+            "answers": answers,
+            "usage": {"input_tokens": 1, "output_tokens": 0},
+        }
+
+    def test_question_ids_exactly_match_policy_ids(self) -> None:
+        criteria = review.policy_criteria(ROOT, "pure")
+        self.assertEqual(set(review.jev_questions(criteria)), {item.id for item in criteria})
+
+    def test_judge_uses_injected_transport_and_maps_block(self) -> None:
+        self.brick("plain")
+        seen: list[dict] = []
+
+        def transport(payload: dict) -> dict:
+            seen.append(payload)
+            return self.response_for(payload["questions"], "block")
+
+        verdict = review.judge(
+            self.root,
+            "strict",
+            ["bricks/plain/src/logic.py"],
+            "+ changed domain behavior",
+            [],
+            [],
+            None,
+            transport=transport,
+        )
+        self.assertEqual(seen[0]["model"], review.JEV_MODEL)
+        self.assertEqual(set(seen[0]["questions"]), {f"strict-{index}" for index in range(1, 7)})
+        self.assertTrue(review.blocks(verdict))
+        self.assertTrue(all(item["severity"] == "block" for item in verdict["findings"]))
+
+    def test_response_rejects_unpinned_model(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        response["model"] = "jev-latest"
+        with self.assertRaisesRegex(review.JevError, "unpinned model"):
+            review.validate_jev_response(response, questions)
+
+    def test_response_rejects_bad_probability_distribution(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        first = next(iter(response["answers"].values()))
+        first["probabilities"] = {key: 0.2 for key in first["probabilities"]}
+        with self.assertRaisesRegex(review.JevError, "sum to one"):
+            review.validate_jev_response(response, questions)
+
+    def test_response_rejects_missing_answer(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        response["answers"].pop(next(iter(response["answers"])))
+        with self.assertRaisesRegex(review.JevError, "exactly the requested"):
+            review.validate_jev_response(response, questions)
+
+    def test_response_rejects_unknown_choice_and_bad_confidence(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        first = next(iter(response["answers"].values()))
+        first["choice"] = "invented"
+        with self.assertRaisesRegex(review.JevError, "unknown outcome"):
+            review.validate_jev_response(response, questions)
+        first["choice"] = "pass"
+        first["confidence"] = 1.1
+        with self.assertRaisesRegex(review.JevError, "invalid confidence"):
+            review.validate_jev_response(response, questions)
+
+    def test_http_request_has_pinned_endpoint_body_and_secret_header(self) -> None:
+        payload = {"model": review.JEV_MODEL, "state": "x", "questions": {"q": {}}}
+        captured = {}
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok":true}'
+
+        def opener(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = request.data
+            captured["authorization"] = request.get_header("Authorization")
+            captured["content_type"] = request.get_header("Content-type")
+            captured["accept"] = request.get_header("Accept")
+            captured["timeout"] = timeout
+            return Response()
+
+        self.assertEqual(review._http_post(payload, "top-secret", opener), {"ok": True})
+        self.assertEqual(captured["url"], review.JEV_ENDPOINT)
+        self.assertEqual(captured["authorization"], "Bearer top-secret")
+        self.assertEqual(captured["content_type"], "application/json")
+        self.assertEqual(captured["accept"], "application/json")
+        self.assertEqual(captured["timeout"], review.JEV_TIMEOUT_S)
+        self.assertEqual(captured["body"].decode(),
+                         '{"model":"jev-1.13.0","questions":{"q":{}},"state":"x"}')
+
+    def test_http_auth_error_fails_closed_without_retry(self) -> None:
+        calls = []
+
+        def opener(request, timeout):
+            calls.append((request, timeout))
+            raise HTTPError(request.full_url, 401, "unauthorized", {}, None)
+
+        with self.assertRaisesRegex(review.JevError, "HTTP 401"):
+            review._http_post({}, "secret", opener)
+        self.assertEqual(len(calls), 1)
+
+    def test_http_network_error_retries_then_fails_closed(self) -> None:
+        calls = []
+
+        def opener(request, timeout):
+            calls.append((request, timeout))
+            raise URLError("offline")
+
+        with mock.patch("tools.review.time.sleep"):
+            with self.assertRaisesRegex(review.JevError, "transport failed"):
+                review._http_post({}, "secret", opener)
+        self.assertEqual(len(calls), review.JEV_RETRIES)
+
+    def test_http_malformed_json_fails_closed(self) -> None:
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b"not json"
+
+        with self.assertRaisesRegex(review.JevError, "malformed JSON"):
+            review._http_post({}, "secret", lambda *_args, **_kwargs: Response())

@@ -1,8 +1,6 @@
-# Brick framework with Bend verification
+# Brick framework
 
-This repository is language-neutral boilerplate for organizing one codebase into domain **bricks** and application **workflows**. Python demonstrates the host-language shape. Bend does not implement or execute application behavior; it verifies the repository's architecture in CI.
-
-The included extractor understands Python syntax. Supporting another host language means adding a small extractor frontend that emits the same Bend facts; the Bend rules and laws stay unchanged.
+This repository is boilerplate for organizing one codebase into domain **bricks** and application **workflows**. Python demonstrates the host-language shape. A deterministic linter enforces mechanical boundaries, and Jev makes the bounded semantic decisions that syntax cannot prove.
 
 ## Runtime structure
 
@@ -19,56 +17,45 @@ bricks/<brick>/
 
 workflows/<workflow>/
 ├── __init__.py           # exposes only run
-├── contract.py           # WorkflowInput, WorkflowOutput, brick dependencies
+├── contract.py           # whole-operation input/output and brick dependencies
 └── flow.py               # translation and brick-call sequencing
 ```
 
-Bricks own domain behavior, state, and external capabilities. Workflows own whole-use-case composition. A workflow has one input and one output, depends only on bricks, owns no state or infrastructure, and does not call another workflow.
+Bricks own domain behavior, state, and external capabilities. Workflows own whole-use-case composition. A workflow retains one input and one output, depends only on bricks, owns no state or infrastructure, and does not call another workflow.
 
-`example_brick` and `example_workflow` are host-language placeholders. Their `NotImplementedError` is intentional: this repository supplies boundaries, not a shared runtime engine.
+`example_brick` and `example_workflow` are placeholders. Their `NotImplementedError` is intentional: this repository supplies boundaries, not a shared runtime engine.
 
-## Stable Bend verification
+## Enforcement split
 
-The verification path is separate from application code:
+`tools/model_repository.py` is the mandatory structural gate. It reads Python syntax and the filesystem without importing application code. It enforces:
 
-```text
-tools/model_repository.py   # extracts facts without importing application code
-ARCHITECTURE.bend           # generated repository model
-verification/rules.bend     # stable framework validation functions
-LAWS.bend                   # one stable repository-validity law
-PROOF.bend                  # machine-checked proof over generated facts
-```
+- required package shape and typed `run(input) -> output` entries;
+- literal contract metadata and known lanes;
+- declared, acyclic brick dependencies with actual public `run` imports;
+- permitted cross-package surfaces and dependency direction;
+- external effects only in strict-brick adapters;
+- no dependencies or recognizable effects in pure bricks;
+- unique brick state ownership and no workflow-owned state.
 
-The extractor is the host-language linter and trusted source frontend. It validates local syntax and package shape, interns package and state names as numeric IDs, and records:
+The static effect list is conservative, not a complete semantic proof. It recognizes common file, network, process, clock, randomness, secret, and UUID effects and treats unknown libraries as capabilities.
 
-- package kind, lane, dependency certificate, and required-shape result;
-- cross-package edges and recognizable external-effect imports or calls with their source role and target surface;
-- state ownership.
+`tools/review.py` is the mandatory semantic gate. It routes changed packages by lane, loads stable criteria from `review/*.md`, and asks the pinned Jev model one typed choice question per criterion. Jev decides whether each criterion passes, advises, or blocks. The framework trusts that decision: any `block` result fails the review. A missing key, provider error, incomplete answer set, unexpected model, or malformed probability distribution fails closed as NOT REVIEWED.
 
-Bend then verifies relationships between those facts: package IDs and state ownership are unique, dependencies target bricks and are acyclic, pure bricks have no dependencies, every declared executable dependency has a public `run` import, cross-package imports use allowed public surfaces, recognizable external effects stay in strict-brick adapters, and workflow state ownership is impossible.
+The semantic gate covers questions such as whether an adapter is truly thin, a consistency declaration is honest, a pure brick has hidden inputs, or a workflow contains domain behavior. It does not repeat the linter's structural rules.
 
-Filesystem and Python-AST facts must be extracted because Bend cannot inspect a repository directly. Bend requires every extractor-defined shape result to be true; it does not independently rediscover those source facts. The generated model is committed, and CI runs the extractor in `--check` mode immediately before Bend so a stale or hand-edited model cannot be proved accidentally.
-
-Static checks identify common effects such as file access, clocks, module-level randomness, system randomness, and UUID generation. They are deliberately conservative rather than a complete purity proof. Semantic review and host-language tests remain responsible for hidden inputs, actual state access, consistency-policy truth, type behavior, and whether a workflow contains only composition.
-
-## What changes when
-
-| Change | Host code | `ARCHITECTURE.bend` | Bend rules/laws |
-| --- | --- | --- | --- |
-| Brick behavior | Yes | No | No |
-| Add or rewire a package | Yes | Regenerate | No |
-| Change a framework invariant | Maybe | Regenerate | Yes |
-
-Business laws and example-specific behavior belong in ordinary host-language tests. A normal feature should not edit `LAWS.bend`, `PROOF.bend`, or `verification/rules.bend`.
+Business behavior remains the responsibility of ordinary host-language tests.
 
 ## Commands
 
 ```sh
-python3 tools/model_repository.py --write  # after architecture changes
-python3 tools/model_repository.py --check  # drift gate
-bend PROOF.bend                            # structural proof
-python3 tools/graph_bricks.py              # Mermaid dependency graph
+python3 tools/model_repository.py --root . --check
+python3 tools/graph_bricks.py
 python3 -m unittest discover -s tools/tests -t . -v
+
+# Reviews the working-tree diff. Requires TYPESAFE_API_KEY when a lane is touched.
+TYPESAFE_API_KEY=... python3 tools/review.py
 ```
 
-The repository pins Bend in `.bend-version`. Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so the extractor and verifier rules cannot drift independently.
+Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so repositories cannot silently switch enforcement versions. The review workflow also requires the caller's `TYPESAFE_API_KEY` secret.
+
+Supporting another host language means adding an equivalent mechanical source frontend. The brick/workflow contract and Jev policy criteria do not otherwise depend on Python.

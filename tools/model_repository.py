@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract host-language repository facts for the stable Bend verifier."""
+"""Enforce the brick framework's mechanical repository boundaries."""
 
 from __future__ import annotations
 
@@ -399,8 +399,6 @@ def extract_imports(package: PackageFact, root: Path) -> list[ImportFact]:
 
 def package_fact(path: Path, kind: str) -> tuple[PackageFact, list[ImportFact]]:
     package = PackageFact(path.name, kind)
-    if list(path.rglob("*.bend")):
-        package.invalidate("package behavior may not be implemented in Bend")
     required = BRICK_REQUIRED if kind == "brick" else WORKFLOW_REQUIRED
     for relative in required:
         if not (path / relative).exists():
@@ -548,93 +546,22 @@ def validation_errors(model: RepositoryModel) -> list[str]:
     return errors
 
 
-def bend_bool(value: bool) -> str:
-    return "True{}" if value else "False{}"
-
-
-def render(model: RepositoryModel) -> str:
-    package_ids = {package.name: index for index, package in enumerate(model.packages, 1)}
-    resources = sorted({item for package in model.packages for item in package.owned_state})
-    resource_ids = {name: index for index, name in enumerate(resources, 1)}
-    lines = [
-        "# Generated repository facts. Run: python3 tools/model_repository.py --write",
-        "import Base",
-        "import ./verification/rules.bend as Rules",
-        "",
-        "# Package ids: " + ", ".join(
-            f"{id}={name}" for name, id in package_ids.items()
-        ),
-        "# State ids: " + (
-            ", ".join(f"{id}={name}" for name, id in resource_ids.items()) or "none"
-        ),
-        "def repository() -> Rules.Repository:",
-        "  Rules.Repository{",
-        "    [",
-    ]
-    package_terms: list[str] = []
-    for package in model.packages:
-        kind = "Brick" if package.kind == "brick" else "Workflow"
-        lane = "Pure" if package.lane == "pure" else "Strict"
-        dependencies = ", ".join(
-            str(package_ids.get(name, 0)) for name in package.dependencies
-        )
-        package_terms.append(
-            "      Rules.Package{"
-            f"{package_ids[package.name]}, Rules.{kind}{{}}, Rules.{lane}{{}}, "
-            f"{model.ranks[package.name]}, [{dependencies}], {bend_bool(package.shape_valid)}"
-            "}"
-        )
-    lines.append(",\n".join(package_terms))
-    lines.extend(["    ],", "    ["])
-    import_terms = [
-        "      Rules.ImportEdge{"
-        f"{package_ids[item.source]}, {package_ids.get(item.target or '', 0)}, "
-        f"Rules.{item.role.title()}{{}}, Rules.{item.surface.title()}{{}}"
-        "}"
-        for item in model.imports
-    ]
-    lines.append(",\n".join(import_terms))
-    lines.extend(["    ],", "    ["])
-    state_terms = [
-        "      Rules.StateOwner{"
-        f"{resource_ids[resource]}, {package_ids[package.name]}"
-        "}"
-        for package in model.packages
-        for resource in package.owned_state
-    ]
-    lines.append(",\n".join(state_terms))
-    lines.extend(["    ]", "  }", ""])
-    return "\n".join(lines)
-
-
-def report_issues(model: RepositoryModel) -> None:
-    for package in model.packages:
-        for issue in package.issues:
-            print(f"MODEL {package.kind} {package.name}: {issue}", file=sys.stderr)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    action = parser.add_mutually_exclusive_group()
-    action.add_argument("--write", action="store_true", help="replace ARCHITECTURE.bend")
-    action.add_argument("--check", action="store_true", help="fail when the model is stale")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="retained for reusable-workflow compatibility; validation always runs",
+    )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
     root = args.root.resolve()
-    model = build_model(root)
-    output = render(model)
-    target = root / "ARCHITECTURE.bend"
-    report_issues(model)
-    if args.write:
-        target.write_text(output, encoding="utf-8")
-        return 0
-    if args.check:
-        current = target.read_text(encoding="utf-8") if target.is_file() else ""
-        if current != output:
-            print("ARCHITECTURE.bend is stale; run python3 tools/model_repository.py --write", file=sys.stderr)
-            return 1
-        return 0
-    print(output, end="")
+    errors = validation_errors(build_model(root))
+    for error in errors:
+        print(f"LINT {error}", file=sys.stderr)
+    if errors:
+        print(f"repository architecture failed with {len(errors)} issue(s)", file=sys.stderr)
+        return 1
+    print("repository architecture is valid")
     return 0
 
 
