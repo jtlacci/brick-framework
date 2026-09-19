@@ -11,7 +11,7 @@ on:
         type: string
         required: true
     secrets:
-      TYPESAFE_API_KEY:
+      AI_GATEWAY_API_KEY:
         required: true
 
 jobs:
@@ -63,7 +63,7 @@ jobs:
 
       - name: review
         env:
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           VERDICTS_OUT: verdicts.json

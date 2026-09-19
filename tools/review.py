@@ -29,8 +29,10 @@ COMMON_PROMPT = "common.md"
 STRICT = "strict"
 CONTEXT_DOCS = ("AGENTS.md", "bricks/AGENTS.md", "workflows/AGENTS.md")
 
-JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
-JEV_MODEL = "jev-1.13.0"
+JEV_ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
+JEV_MODEL = "typesafe-ai/jev"
+GATEWAY_PROTOCOL_VERSION = "0.0.1"
+EVALUATION_SPEC_VERSION = "4"
 JEV_TIMEOUT_S = 30
 JEV_RETRIES = 3
 JEV_BACKOFF_S = 2
@@ -210,9 +212,9 @@ def ci_misconfigured(env: dict[str, str]) -> str | None:
     if env.get("GITHUB_ACTIONS"):
         if not (base and head):
             return "BASE_SHA and HEAD_SHA must both be set in CI"
-        if not env.get("TYPESAFE_API_KEY"):
+        if not env.get("AI_GATEWAY_API_KEY"):
             return (
-                "TYPESAFE_API_KEY is not set in CI, so no lane ran. Reported as a "
+                "AI_GATEWAY_API_KEY is not set in CI, so no lane ran. Reported as a "
                 "failure rather than a pass: a review that could not be taken is not a review."
             )
     return None
@@ -257,7 +259,11 @@ def jev_payload(state: dict, criteria: list[PolicyCriterion]) -> dict:
             f"review state is {state_bytes} bytes; maximum is {MAX_STATE_BYTES}. "
             "Split the pull request so every criterion sees the complete diff."
         )
-    return {"model": JEV_MODEL, "state": state, "questions": jev_questions(criteria)}
+    return {
+        "state": state,
+        "questions": jev_questions(criteria),
+        "providerOptions": {"gateway": {"zeroDataRetention": True}},
+    }
 
 
 def _http_post(
@@ -273,6 +279,10 @@ def _http_post(
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "ai-gateway-protocol-version": GATEWAY_PROTOCOL_VERSION,
+            "ai-gateway-auth-method": "api-key",
+            "ai-evaluation-model-specification-version": EVALUATION_SPEC_VERSION,
+            "ai-model-id": JEV_MODEL,
         },
         method="POST",
     )
@@ -286,6 +296,11 @@ def _http_post(
         except HTTPError as exc:
             retryable = exc.code == 429 or exc.code == 529 or exc.code >= 500
             if not retryable or attempt == JEV_RETRIES - 1:
+                if exc.code in {401, 403}:
+                    raise JevError(
+                        "Vercel AI Gateway rejected AI_GATEWAY_API_KEY; "
+                        "rotate or reconfigure the repository secret"
+                    ) from exc
                 raise JevError(f"Jev returned HTTP {exc.code}") from exc
         except (URLError, TimeoutError) as exc:
             if attempt == JEV_RETRIES - 1:
@@ -297,12 +312,15 @@ def _http_post(
 
 
 def validate_jev_response(response: dict, questions: dict[str, dict]) -> dict:
-    if not isinstance(response, dict) or set(response) != {"model", "answers", "usage"}:
+    allowed = {"answers", "rounding", "usage", "warnings", "providerMetadata"}
+    if (
+        not isinstance(response, dict)
+        or "answers" not in response
+        or not set(response) <= allowed
+    ):
         raise JevError("Jev response has an unexpected top-level shape")
-    if response["model"] != JEV_MODEL:
-        raise JevError(f"Jev answered with unpinned model {response['model']!r}")
-    usage = response["usage"]
-    if not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}:
+    usage = response.get("usage", {})
+    if not isinstance(usage, dict) or not set(usage) <= {"inputTokens", "outputTokens"}:
         raise JevError("Jev response has invalid usage")
     if any(
         isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
@@ -314,26 +332,24 @@ def validate_jev_response(response: dict, questions: dict[str, dict]) -> dict:
         raise JevError("Jev did not answer exactly the requested criteria")
     for criterion_id, question in questions.items():
         answer = answers[criterion_id]
-        if not isinstance(answer, dict) or set(answer) != {
-            "type", "choice", "probabilities", "confidence"
-        }:
+        if not isinstance(answer, dict) or not {"type", "choice"} <= set(answer):
             raise JevError(f"Jev answer {criterion_id} is not a choice answer")
+        if not set(answer) <= {"type", "choice", "probabilities"}:
+            raise JevError(f"Jev answer {criterion_id} has unexpected fields")
         if answer["type"] != "choice":
             raise JevError(f"Jev answer {criterion_id} has the wrong type")
         options = set(question["criteria"])
         if answer["choice"] not in options:
             raise JevError(f"Jev answer {criterion_id} chose an unknown outcome")
-        probabilities = answer["probabilities"]
-        if not isinstance(probabilities, dict) or set(probabilities) != options:
-            raise JevError(f"Jev answer {criterion_id} has incomplete probabilities")
-        values = list(probabilities.values())
-        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1 for value in values):
-            raise JevError(f"Jev answer {criterion_id} has invalid probabilities")
-        if abs(sum(values) - 1.0) > 0.01:
-            raise JevError(f"Jev answer {criterion_id} probabilities do not sum to one")
-        confidence = answer["confidence"]
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
-            raise JevError(f"Jev answer {criterion_id} has invalid confidence")
+        probabilities = answer.get("probabilities")
+        if probabilities is not None:
+            if not isinstance(probabilities, dict) or set(probabilities) != options:
+                raise JevError(f"Jev answer {criterion_id} has incomplete probabilities")
+            values = list(probabilities.values())
+            if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1 for value in values):
+                raise JevError(f"Jev answer {criterion_id} has invalid probabilities")
+            if abs(sum(values) - 1.0) > 0.01:
+                raise JevError(f"Jev answer {criterion_id} probabilities do not sum to one")
     return response
 
 
@@ -347,6 +363,7 @@ def verdict_from_answers(
         if outcome == "pass":
             continue
         criterion = by_id[criterion_id]
+        probabilities = answer.get("probabilities")
         findings.append(
             {
                 "file": files[0] if len(files) == 1 else "lane diff",
@@ -355,11 +372,16 @@ def verdict_from_answers(
                 "issue": f"{criterion.title} ({criterion.id})",
                 "suggestion": f"Bring the change into compliance with criterion {criterion.id}.",
                 "severity": outcome,
-                "confidence": answer["confidence"],
-                "probabilities": answer["probabilities"],
+                "certainty": max(probabilities.values()) if probabilities else None,
+                "probabilities": probabilities,
             }
         )
-    return {"model": response["model"], "findings": findings, "usage": response["usage"]}
+    return {
+        "provider": "vercel-ai-gateway",
+        "model": JEV_MODEL,
+        "findings": findings,
+        "usage": response.get("usage", {}),
+    }
 
 
 def judge(
@@ -391,9 +413,9 @@ def judge(
     }
     payload = jev_payload(state, criteria)
     if transport is None:
-        key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+        key = os.environ.get("AI_GATEWAY_API_KEY", "").strip()
         if not key:
-            raise JevError("TYPESAFE_API_KEY is not set")
+            raise JevError("AI_GATEWAY_API_KEY is not set")
         response = _http_post(payload, key)
     else:
         response = transport(payload)
@@ -404,10 +426,9 @@ def judge(
 def report(lane: str, verdict: dict) -> None:
     print(f"\n=== {lane} lane: {'BLOCK' if blocks(verdict) else 'PASS'} ===")
     for finding in verdict["findings"]:
-        print(
-            f"  {finding['file']}  [{finding['severity']}] "
-            f"{finding['criterion']} confidence={finding['confidence']:.3f}"
-        )
+        certainty = finding.get("certainty")
+        suffix = f" certainty={certainty:.3f}" if certainty is not None else ""
+        print(f"  {finding['file']}  [{finding['severity']}] {finding['criterion']}{suffix}")
         print(f"    issue:      {finding['issue']}")
         print(f"    suggestion: {finding['suggestion']}")
     if not verdict["findings"]:

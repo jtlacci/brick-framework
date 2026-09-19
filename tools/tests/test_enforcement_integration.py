@@ -24,7 +24,7 @@ class ToolchainWorkflowTests(unittest.TestCase):
 
     def test_review_runs_jev_with_the_required_key(self) -> None:
         text = self.workflow("review.yml")
-        self.assertIn("TYPESAFE_API_KEY", text)
+        self.assertIn("AI_GATEWAY_API_KEY", text)
         self.assertIn(".brick-framework/tools/review.py", text)
         self.assertNotIn("ANTHROPIC", text)
         self.assertNotIn("npm ", text)

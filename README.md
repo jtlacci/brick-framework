@@ -39,7 +39,7 @@ Bricks own domain behavior, state, and external capabilities. Workflows own whol
 
 The static effect list is conservative, not a complete semantic proof. It recognizes common file, network, process, clock, randomness, secret, and UUID effects and treats unknown libraries as capabilities.
 
-`tools/review.py` is the mandatory semantic gate. It routes changed packages by lane, loads stable criteria from `review/*.md`, and asks the pinned Jev model one typed choice question per criterion. Jev decides whether each criterion passes, advises, or blocks. The framework trusts that decision: any `block` result fails the review. A missing key, provider error, incomplete answer set, unexpected model, or malformed probability distribution fails closed as NOT REVIEWED.
+`tools/review.py` is the mandatory semantic gate. It routes changed packages by lane, loads stable criteria from `review/*.md`, and asks Jev through Vercel AI Gateway (`typesafe-ai/jev`) one typed choice question per criterion. Jev decides whether each criterion passes, advises, or blocks. The framework trusts that decision: any `block` result fails the review. A missing key, provider error, incomplete answer set, unexpected response shape, or malformed probability distribution fails closed as NOT REVIEWED. Every request sets `providerOptions.gateway.zeroDataRetention = true`; the Gateway response does not provide a separate ZDR enforcement receipt.
 
 The gate never truncates review state. A diff too large for the bounded Jev request fails with an instruction to split the pull request, so omitted code cannot become an accidental pass.
 
@@ -54,11 +54,25 @@ python3 tools/model_repository.py --root . --check
 python3 tools/graph_bricks.py
 python3 -m unittest discover -s tools/tests -t . -v
 
-# Reviews the working-tree diff. Requires TYPESAFE_API_KEY when a lane is touched.
-TYPESAFE_API_KEY=... python3 tools/review.py
+# Reviews the working-tree diff. Requires AI_GATEWAY_API_KEY when a lane is touched.
+AI_GATEWAY_API_KEY=... python3 tools/review.py
+
+# Optional live wire-contract smoke test.
+AI_GATEWAY_LIVE_TEST=1 AI_GATEWAY_API_KEY=... \
+  python3 -m unittest tools.tests.test_review.JevContractTests.test_live_gateway_smoke -v
 ```
 
-Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so repositories cannot silently switch enforcement versions. The review workflow also requires the caller's `TYPESAFE_API_KEY` secret.
+Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so repositories cannot silently switch enforcement versions. The review workflow also requires the caller's `AI_GATEWAY_API_KEY` secret.
+
+```yaml
+jobs:
+  review:
+    uses: jtlacci/brick-framework/.github/workflows/review.yml@<full-commit-sha>
+    with:
+      framework-ref: <same-full-commit-sha>
+    secrets:
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+```
 
 Make both the validation and review checks required in branch protection. GitHub withholds repository secrets from untrusted fork pull requests; those reviews intentionally fail closed until a maintainer runs the trusted review path with the secret available.
 

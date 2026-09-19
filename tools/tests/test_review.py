@@ -188,13 +188,13 @@ class EnvironmentTests(unittest.TestCase):
     def test_ci_needs_a_key(self) -> None:
         message = review.ci_misconfigured(
             {"GITHUB_ACTIONS": "true", "BASE_SHA": "a", "HEAD_SHA": "b"})
-        self.assertIn("TYPESAFE_API_KEY", message)
+        self.assertIn("AI_GATEWAY_API_KEY", message)
         self.assertIn("not a review", message)
 
     def test_ci_fully_configured(self) -> None:
         self.assertIsNone(review.ci_misconfigured(
             {"GITHUB_ACTIONS": "true", "BASE_SHA": "a", "HEAD_SHA": "b",
-             "TYPESAFE_API_KEY": "k"}))
+             "AI_GATEWAY_API_KEY": "k"}))
 
     def test_diff_range(self) -> None:
         self.assertEqual(review.diff_range("a", "b"), ["a...b"])
@@ -256,12 +256,10 @@ class JevContractTests(Fixture):
                 "type": "choice",
                 "choice": selected,
                 "probabilities": probabilities,
-                "confidence": 1.0,
             }
         return {
-            "model": review.JEV_MODEL,
             "answers": answers,
-            "usage": {"input_tokens": 1, "output_tokens": 0},
+            "usage": {"inputTokens": 1, "outputTokens": 0},
         }
 
     def test_question_ids_exactly_match_policy_ids(self) -> None:
@@ -291,16 +289,18 @@ class JevContractTests(Fixture):
             None,
             transport=transport,
         )
-        self.assertEqual(seen[0]["model"], review.JEV_MODEL)
+        self.assertEqual(
+            seen[0]["providerOptions"], {"gateway": {"zeroDataRetention": True}}
+        )
         self.assertEqual(set(seen[0]["questions"]), {f"strict-{index}" for index in range(1, 7)})
         self.assertTrue(review.blocks(verdict))
         self.assertTrue(all(item["severity"] == "block" for item in verdict["findings"]))
 
-    def test_response_rejects_unpinned_model(self) -> None:
+    def test_response_rejects_unknown_top_level_fields(self) -> None:
         questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
         response = self.response_for(questions)
-        response["model"] = "jev-latest"
-        with self.assertRaisesRegex(review.JevError, "unpinned model"):
+        response["unexpected"] = True
+        with self.assertRaisesRegex(review.JevError, "top-level shape"):
             review.validate_jev_response(response, questions)
 
     def test_response_rejects_bad_probability_distribution(self) -> None:
@@ -318,20 +318,67 @@ class JevContractTests(Fixture):
         with self.assertRaisesRegex(review.JevError, "exactly the requested"):
             review.validate_jev_response(response, questions)
 
-    def test_response_rejects_unknown_choice_and_bad_confidence(self) -> None:
+    def test_response_rejects_unknown_choice(self) -> None:
         questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
         response = self.response_for(questions)
         first = next(iter(response["answers"].values()))
         first["choice"] = "invented"
         with self.assertRaisesRegex(review.JevError, "unknown outcome"):
             review.validate_jev_response(response, questions)
-        first["choice"] = "pass"
-        first["confidence"] = 1.1
-        with self.assertRaisesRegex(review.JevError, "invalid confidence"):
-            review.validate_jev_response(response, questions)
+
+    def test_response_accepts_gateway_choice_without_probabilities(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        for answer in response["answers"].values():
+            answer.pop("probabilities")
+        self.assertIs(review.validate_jev_response(response, questions), response)
+
+    def test_response_accepts_the_gateway_sdk_fixture_shape(self) -> None:
+        questions = review.jev_questions(review.policy_criteria(ROOT, "workflow"))
+        response = self.response_for(questions)
+        response.update(
+            {
+                "rounding": {"probabilityDecimals": 2, "scoreDecimals": 2},
+                "warnings": [],
+                "providerMetadata": {"gateway": {"cost": "0.002"}},
+            }
+        )
+        self.assertIs(review.validate_jev_response(response, questions), response)
+
+    def test_probability_peak_is_reported_as_certainty(self) -> None:
+        criteria = review.policy_criteria(ROOT, "workflow")
+        questions = review.jev_questions(criteria)
+        response = self.response_for(questions, "block")
+        verdict = review.verdict_from_answers(
+            criteria, response, ["workflows/example_workflow/flow.py"]
+        )
+        self.assertTrue(verdict["findings"])
+        self.assertTrue(all(item["certainty"] == 1.0 for item in verdict["findings"]))
+
+    @unittest.skipUnless(
+        os.environ.get("AI_GATEWAY_LIVE_TEST") == "1"
+        and bool(os.environ.get("AI_GATEWAY_API_KEY")),
+        "set AI_GATEWAY_LIVE_TEST=1 and AI_GATEWAY_API_KEY for a live smoke test",
+    )
+    def test_live_gateway_smoke(self) -> None:
+        criteria = [
+            review.PolicyCriterion(
+                "smoke-1",
+                "The state is a smoke test",
+                ("pass", "block"),
+                "Outcomes: pass, block\n\nChoose pass for the literal smoke-test state.",
+            )
+        ]
+        payload = review.jev_payload({"text": "This is a smoke test."}, criteria)
+        response = review._http_post(payload, os.environ["AI_GATEWAY_API_KEY"])
+        review.validate_jev_response(response, payload["questions"])
 
     def test_http_request_has_pinned_endpoint_body_and_secret_header(self) -> None:
-        payload = {"model": review.JEV_MODEL, "state": "x", "questions": {"q": {}}}
+        payload = {
+            "state": "x",
+            "questions": {"q": {}},
+            "providerOptions": {"gateway": {"zeroDataRetention": True}},
+        }
         captured = {}
 
         class Response:
@@ -352,6 +399,10 @@ class JevContractTests(Fixture):
             captured["authorization"] = request.get_header("Authorization")
             captured["content_type"] = request.get_header("Content-type")
             captured["accept"] = request.get_header("Accept")
+            captured["protocol"] = request.get_header("Ai-gateway-protocol-version")
+            captured["auth_method"] = request.get_header("Ai-gateway-auth-method")
+            captured["spec"] = request.get_header("Ai-evaluation-model-specification-version")
+            captured["model"] = request.get_header("Ai-model-id")
             captured["timeout"] = timeout
             return Response()
 
@@ -360,9 +411,16 @@ class JevContractTests(Fixture):
         self.assertEqual(captured["authorization"], "Bearer top-secret")
         self.assertEqual(captured["content_type"], "application/json")
         self.assertEqual(captured["accept"], "application/json")
+        self.assertEqual(captured["protocol"], review.GATEWAY_PROTOCOL_VERSION)
+        self.assertEqual(captured["auth_method"], "api-key")
+        self.assertEqual(captured["spec"], review.EVALUATION_SPEC_VERSION)
+        self.assertEqual(captured["model"], review.JEV_MODEL)
         self.assertEqual(captured["timeout"], review.JEV_TIMEOUT_S)
-        self.assertEqual(captured["body"].decode(),
-                         '{"model":"jev-1.13.0","questions":{"q":{}},"state":"x"}')
+        self.assertEqual(
+            captured["body"].decode(),
+            '{"providerOptions":{"gateway":{"zeroDataRetention":true}},'
+            '"questions":{"q":{}},"state":"x"}',
+        )
 
     def test_http_auth_error_fails_closed_without_retry(self) -> None:
         calls = []
@@ -371,7 +429,7 @@ class JevContractTests(Fixture):
             calls.append((request, timeout))
             raise HTTPError(request.full_url, 401, "unauthorized", {}, None)
 
-        with self.assertRaisesRegex(review.JevError, "HTTP 401"):
+        with self.assertRaisesRegex(review.JevError, "rotate or reconfigure"):
             review._http_post({}, "secret", opener)
         self.assertEqual(len(calls), 1)
 
@@ -422,7 +480,7 @@ class JevContractTests(Fixture):
         path = repo / "bricks/example_brick/src/logic.py"
         path.write_text(path.read_text() + "\n# changed\n", encoding="utf-8")
         environment = dict(os.environ)
-        environment.pop("TYPESAFE_API_KEY", None)
+        environment.pop("AI_GATEWAY_API_KEY", None)
         environment.pop("GITHUB_ACTIONS", None)
         result = subprocess.run(
             ["python3", str(ROOT / "tools/review.py")],
