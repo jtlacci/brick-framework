@@ -1,34 +1,30 @@
-# The workflow lane
+# Workflow semantic policy
 
-Everything in the strict lane applies. A workflow is invoked as a whole
-operation and never depended on; the linter has already confined
-`__main__.py` and the smoke tests to this lane. You judge whether the brick is
-still a composition and not a domain in disguise.
+### workflow-1: The workflow contains composition only
 
-## What to judge
+Outcomes: pass, block
 
-Criteria 1–8 of the strict lane, then:
+`flow.py` translates values and sequences declared brick `run` calls. Domain
+rules belong in bricks; domain behavior in the workflow blocks.
 
-9. **The runner composes; it does not compute.** `runner/run.py` and
-   `__main__.py` create the run context, call `src/`, and record the outcome.
-   A diff that puts a decision, a calculation, a retry policy or a data
-   transformation into either — anything a focused test would want to reach —
-   has moved domain logic to the one place the lane's rules do not follow it.
-   Block.
+### workflow-2: The contract describes one whole operation
 
-10. **Orchestration is real.** A workflow is where `orchestrated` sibling
-    dependencies are honoured: it sequences the sibling calls and compensates
-    when a later one fails. A diff that adds an `orchestrated` dependency and
-    no sequencing, or that leaves a partial failure with no compensation and no
-    stated reason, blocks.
+Outcomes: pass, advisory, block
 
-11. **Smoke tests go through the door.** A smoke test defines one explicit
-    input, calls the brick's top-level `run`, and asserts on the output. A
-    smoke test that imports `src/`, patches an adapter, or reaches into a
-    sibling is a focused test in the wrong folder. Advisory — unless it makes
-    a sibling run fresh, which the boundary forbids and which blocks.
+`WorkflowInput` and `WorkflowOutput` describe one coherent use case, not a
+generic dispatcher. A dispatcher is advisory unless it hides a dependency or
+boundary, which blocks.
 
-## Severity
+### workflow-3: Capabilities remain isolated in bricks
 
-Criteria **9 and 10 block**; criterion 11 blocks only when it makes a sibling
-run fresh. The strict lane's severities stand for criteria 1–8.
+Outcomes: pass, block
+
+Infrastructure and external behavior remain owned by bricks. A disguised
+workflow effect blocks.
+
+### workflow-4: Meaningful orchestration has host-language evidence
+
+Outcomes: pass, advisory
+
+Meaningful sequencing, translation, and failure behavior should be covered by
+ordinary host-language tests. Missing high-value coverage is advisory.

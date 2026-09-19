@@ -1,0 +1,46 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      framework-ref:
+        description: immutable framework revision whose linter should validate the caller
+        type: string
+        required: true
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: require immutable framework revision
+        if: github.event_name == 'workflow_call'
+        env:
+          FRAMEWORK_REF: ${{ inputs.framework-ref }}
+        run: |
+          if [[ ! "$FRAMEWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "framework-ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jtlacci/brick-framework
+          ref: ${{ inputs.framework-ref }}
+          path: .brick-framework
+        if: github.event_name == 'workflow_call'
+
+      - name: validate repository architecture
+        run: |
+          if [ "${{ github.event_name }}" = workflow_call ]; then
+            python3 .brick-framework/tools/model_repository.py --root . --check
+          else
+            python3 tools/model_repository.py --root . --check
+          fi
+
+      - name: test framework tools
+        if: github.repository == 'jtlacci/brick-framework'
+        run: python3 -m unittest discover -s tools/tests -t . -v
