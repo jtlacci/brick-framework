@@ -17,9 +17,10 @@ class ToolchainWorkflowTests(unittest.TestCase):
     def workflow(self, name: str) -> str:
         return (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
 
-    def test_validation_runs_the_framework_linter(self) -> None:
-        text = self.workflow("validate.yml")
-        self.assertIn(".brick-framework/tools/model_repository.py --root . --check", text)
+    def test_both_workflows_run_the_framework_linter(self) -> None:
+        for name in ("validate.yml", "review.yml"):
+            text = self.workflow(name)
+            self.assertIn(".brick-framework/tools/model_repository.py --root . --check", text)
 
     def test_validation_has_an_opt_in_strict_connection_gate(self) -> None:
         text = self.workflow("validate.yml")
@@ -39,12 +40,24 @@ class ToolchainWorkflowTests(unittest.TestCase):
         self.assertIn("python_version = 3.12", config)
         self.assertNotIn("ignore_missing_imports", config)
 
+    def test_review_runs_jev_with_the_required_key(self) -> None:
+        text = self.workflow("review.yml")
+        self.assertIn("AI_GATEWAY_API_KEY", text)
+        self.assertIn(".brick-framework/tools/review.py", text)
+        self.assertNotIn("ANTHROPIC", text)
+        self.assertNotIn("npm ", text)
+        self.assertLess(
+            text.index(".brick-framework/tools/model_repository.py"),
+            text.index(".brick-framework/tools/review.py"),
+        )
+
     def test_reusable_workflows_require_an_immutable_framework_ref(self) -> None:
-        text = self.workflow("validate.yml")
-        declaration = re.search(r"framework-ref:\n(?P<body>(?:        .+\n)+)", text)
-        self.assertIsNotNone(declaration)
-        self.assertIn("required: true", declaration.group("body"))
-        self.assertIn("framework-ref must be a full 40-character commit SHA", text)
+        for name in ("validate.yml", "review.yml"):
+            text = self.workflow(name)
+            declaration = re.search(r"framework-ref:\n(?P<body>(?:        .+\n)+)", text)
+            self.assertIsNotNone(declaration)
+            self.assertIn("required: true", declaration.group("body"))
+            self.assertIn("framework-ref must be a full 40-character commit SHA", text)
 
 
 class RepositoryLinterTests(unittest.TestCase):

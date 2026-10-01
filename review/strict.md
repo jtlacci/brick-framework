@@ -1,58 +1,44 @@
-# The strict lane
+# Strict brick semantic policy
 
-The regular brick. Every rule in `bricks/AGENTS.md` applies and the linter has
-checked its mechanical half. You judge the meaning.
+### strict-1: The public door is one coherent operation
 
-## What to judge
+Outcomes: pass, advisory, block
 
-1. **The door is one operation.** `run` takes one typed input and returns one
-   typed output. A diff that grows `run` into a dispatcher — a mode string, a
-   `kind` field, an `action` switch — is the repository's split signal being
-   ignored. Advisory, unless the dispatch hides a second sibling dependency the
-   contract does not declare, which blocks.
+`run` represents one domain capability, not a generic action dispatcher. A
+dispatcher is advisory when it only muddies the API and blocking when it hides
+a dependency or boundary.
 
-2. **Mode discipline in adapters.** Each adapter owns saved, fresh and save
-   behaviour. On the default path it replays the named example and a missing or
-   mismatched example is an error, never an implicit live call. `save` implies
-   fresh, redacts, validates, and replaces atomically. A diff on which the
-   default path can reach a real source, or on which a sibling call forwards
-   `fresh` or `save`, blocks.
+### strict-2: Effects are explicit and thin
 
-3. **Translation at the boundary.** A sibling adapter imports the sibling's
-   `run` and translates its output into this brick's own types. A diff that
-   passes a sibling's `BrickOutput` (or its field names) straight through into
-   `src/` has moved the sibling's contract inside this brick; when that type
-   later changes, two bricks break where one should. Block when the foreign type
-   crosses into `src/`; advisory when it merely leaks into a name.
+Outcomes: pass, block
 
-4. **The consistency policy is true.** `eventual` accepts lag; `orchestrated`
-   means this brick sequences and compensates. A diff that reads an `eventual`
-   sibling and then acts as if the result were current — a balance, a lock, a
-   latest-record read followed by a write that assumes it — blocks. A diff that
-   declares `orchestrated` and implements no sequencing or compensation blocks.
+Each adapter owns one external or sibling boundary. Normalization and domain
+decisions remain in domain code. Hidden effects and implicit live fallbacks are
+blocking boundary defects.
 
-5. **Writes land on owned state.** `OWNED_STATE` names what this brick may
-   change. The linter compares declarations; it cannot see a write. A diff that
-   writes, deletes or migrates a resource the contract does not own — through an
-   adapter or otherwise — blocks.
+### strict-3: Translation happens at the boundary
 
-6. **Evidence is safe to commit.** Saved examples and run records are tracked
-   in Git. A diff whose example carries a credential, a cookie, a personal
-   record, or an unbounded payload blocks; the linter's redaction list is a
-   floor, not the definition of sensitive.
+Outcomes: pass, block
 
-7. **Simplicity and duplication.** Is there a materially simpler construction
-   with the same behaviour? Does this reimplement something the brick, or a
-   sibling's `run`, already provides? Name it concretely; "could be cleaner" is
-   not a finding. Advisory.
+Sibling values are translated into the owning brick's types before reaching
+private logic. Cross-domain types leaking into private domain code block.
 
-8. **Tests that earn their keep.** A focused `src/` test that restates the
-   implementation, asserts on a private helper's shape, or cannot fail reads as
-   coverage without being any. Advisory.
+### strict-4: The consistency policy describes reality
 
-## Severity
+Outcomes: pass, block
 
-Criteria **2, 4, 5 and 6 block**, and criterion 3 blocks when the foreign type
-reaches `src/`. Criteria 1, 7 and 8 are advisory — except where such a finding
-names a concrete path by which the boundary stops holding, which is one of the
-blocking criteria wearing another label.
+`eventual` accepts lag. `orchestrated` means this brick actually owns sequencing
+and failure handling. A false declaration blocks.
+
+### strict-5: Writes land on state owned by this brick
+
+Outcomes: pass, block
+
+Writes, deletes, and migrations against state that the brick does not own block.
+
+### strict-6: Important behavior has host-language evidence
+
+Outcomes: pass, advisory
+
+Important domain behavior should have ordinary tests near its implementation.
+Missing high-value coverage is advisory.
