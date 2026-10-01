@@ -15,7 +15,7 @@ Python is the example host language.
 
 - `tools/model_repository.py` is the mandatory structural linter. It reads source without importing application code and enforces package shape, contracts, dependency direction, import surfaces, effect placement, cycles, and state ownership.
 - The host-language type checker validates actual brick and workflow connections. Python callers use the pinned strict mypy gate; another host language supplies its equivalent.
-- Business behavior and examples belong in ordinary host-language tests. Architectural intent that syntax cannot prove belongs in semantic review; the existing optional gate covers brick lanes, while top-level workflows still require human review.
-- A normal feature should not change framework enforcement code.
+- `review/<lane>.md` contains stable semantic criteria that syntax cannot prove. `tools/review.py` sends those bounded criteria to Jev and treats Jev's blocking classifications as merge failures.
+- Business behavior and examples belong in ordinary host-language tests. A normal feature should not change framework enforcement code or policy criteria.
 
-Keep the linter mechanical and standard-library-only. Use distinct semantic field types and explicit caller-owned translations at package boundaries.
+Keep the linter mechanical and standard-library-only. Use distinct semantic field types and explicit caller-owned translations at package boundaries. Keep semantic policy criteria explicit, independently answerable, and identified by stable IDs.

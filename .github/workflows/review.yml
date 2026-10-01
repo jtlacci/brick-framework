@@ -1,34 +1,18 @@
-# The review gate, for repositories built on this framework. Nothing here
-# runs on the framework itself: this is a reusable workflow, and it does
-# work only when another repository calls it. The caller adds one file:
-#
-#   # .github/workflows/review.yml
-#   on: pull_request
-#   jobs:
-#     review:
-#       uses: jtlacci/brick-framework/.github/workflows/review.yml@main
-#       secrets: inherit
-#
-# One model verdict per lane the pull request touches, each lane judged
-# against review/<lane>.md (the caller's own file wins over the framework's).
-# Routing is derived from bricks/<name>/contract.py in the caller's tree.
-#
-# Without an ANTHROPIC_API_KEY secret the job SKIPS, loudly, and passes: a
-# repository opts into the gate by adding the secret, and nothing breaks
-# before it does. With the secret set, "not reviewed" is a failure -- see
-# tools/review.py for the exit codes.
+# Reusable semantic review for repositories built on this framework. The
+# deterministic architecture linter runs first; Jev then judges only the
+# meaning-level criteria in review/<lane>.md.
 name: review
 
 on:
   workflow_call:
     inputs:
       framework-ref:
-        description: the framework revision to review with
+        description: immutable framework revision to validate and review with
         type: string
-        default: main
+        required: true
     secrets:
-      ANTHROPIC_API_KEY:
-        required: false
+      AI_GATEWAY_API_KEY:
+        required: true
 
 jobs:
   review:
@@ -37,47 +21,34 @@ jobs:
       contents: read
       actions: read
     steps:
-      # The secrets context cannot gate a job, only a step, so the check is
-      # a step that every later one conditions on.
-      - id: key
-        env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -n "$KEY" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::review skipped: this repository has no ANTHROPIC_API_KEY secret"
-            echo "## Review skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "No \`ANTHROPIC_API_KEY\` secret in this repository. Add one to enable the gate." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - if: steps.key.outputs.present == 'true'
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          # Both ends of the PR range must be present for `git diff base...head`.
           fetch-depth: 0
 
-      - if: steps.key.outputs.present == 'true'
-        uses: actions/checkout@v4
+      - name: require immutable framework revision
+        env:
+          FRAMEWORK_REF: ${{ inputs.framework-ref }}
+        run: |
+          if [[ ! "$FRAMEWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "framework-ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
         with:
           repository: jtlacci/brick-framework
           ref: ${{ inputs.framework-ref }}
           path: .brick-framework
 
-      - if: steps.key.outputs.present == 'true'
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - if: steps.key.outputs.present == 'true'
-        run: python3 -m pip install --quiet anthropic
+      - name: validate repository architecture
+        run: python3 .brick-framework/tools/model_repository.py --root . --check
 
-      # Memory across rounds: the verdicts the last run of THIS PR uploaded.
-      # `gh run download` refuses artifacts from other workflow runs, so the
-      # artifact is found by name through the API and fetched as a zip. A
-      # missing artifact is the first round, not an error.
+      # The last verdict for this PR is context for the next review round.
       - name: restore previous verdicts
-        if: steps.key.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: review-verdicts-pr-${{ github.event.pull_request.number }}
@@ -91,17 +62,14 @@ jobs:
           fi
 
       - name: review
-        if: steps.key.outputs.present == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           VERDICTS_OUT: verdicts.json
         run: python3 .brick-framework/tools/review.py
 
-      # Uploaded even when the review blocked or failed, so the next round
-      # remembers this one. Missing file (no lane ran) is not an error.
-      - if: always() && steps.key.outputs.present == 'true'
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: review-verdicts-pr-${{ github.event.pull_request.number }}

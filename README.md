@@ -1,6 +1,6 @@
 # Brick framework
 
-This repository is boilerplate for organizing one codebase into domain **bricks** and application **workflows**. Python demonstrates the host-language shape. A deterministic linter and strict host-language typing enforce mechanical boundaries; ordinary tests and semantic review cover behavior and intent.
+This repository is boilerplate for organizing one codebase into domain **bricks** and application **workflows**. Python demonstrates the host-language shape. A deterministic linter enforces mechanical boundaries, and Jev makes the bounded semantic decisions that syntax cannot prove.
 
 ## Runtime structure
 
@@ -41,9 +41,13 @@ The static effect list is conservative, not a complete semantic proof. It recogn
 
 The host-language type gate checks the connections the application actually executes. For the Python frontend, pinned strict mypy checks `bricks/` and `workflows/`. Distinct domain field types make cross-boundary translation explicit, so two structurally similar contracts cannot be connected accidentally. The regression fixture also proves that the configured checker rejects a known-bad connection. This is static enforcement; runtime boundary validation remains application-specific. Other host languages provide an equivalent strict type-checking step.
 
-Business behavior remains the responsibility of ordinary host-language tests. Meaning-level questions—such as whether an adapter is truly thin, a consistency declaration is honest, or a workflow contains domain behavior—remain explicit review responsibilities rather than automated proof claims.
+`tools/review.py` is the mandatory semantic gate. It routes changed packages by lane, loads stable criteria from `review/*.md`, and asks Jev through Vercel AI Gateway (`typesafe-ai/jev`) one typed choice question per criterion. Jev decides whether each criterion passes, advises, or blocks. The framework trusts that decision: any `block` result fails the review. A missing key, provider error, incomplete answer set, unexpected response shape, or malformed probability distribution fails closed as NOT REVIEWED. Every request sets `providerOptions.gateway.zeroDataRetention = true`; the Gateway response does not provide a separate ZDR enforcement receipt.
 
-The existing optional Claude review gate remains available for brick changes and is unchanged by this core migration. It routes bricks by lane through `tools/review.py`; top-level `workflows/` remain outside that legacy gate and require human review.
+The gate never truncates review state. A diff too large for the bounded Jev request fails with an instruction to split the pull request, so omitted code cannot become an accidental pass.
+
+The semantic gate covers questions such as whether an adapter is truly thin, a consistency declaration is honest, a pure brick has hidden inputs, or a workflow contains domain behavior. It does not repeat the linter's structural rules.
+
+Business behavior remains the responsibility of ordinary host-language tests.
 
 ## Commands
 
@@ -56,9 +60,16 @@ python3 -m unittest discover -s tools/tests -t . -v
 python3 -m pip install -r requirements-typecheck.txt
 python3 -m mypy --config-file mypy.ini bricks workflows
 python3 tools/check_typing_fixture.py
+
+# Reviews the working-tree diff. Requires AI_GATEWAY_API_KEY when a lane is touched.
+AI_GATEWAY_API_KEY=... python3 tools/review.py
+
+# Optional live wire-contract smoke test.
+AI_GATEWAY_LIVE_TEST=1 AI_GATEWAY_API_KEY=... \
+  python3 -m unittest tools.tests.test_review.JevContractTests.test_live_gateway_smoke -v
 ```
 
-The reusable GitHub Actions validation workflow requires an immutable full commit SHA through `framework-ref`, so repositories cannot silently switch enforcement versions. Python callers opt into the strict connection gate with `type_check: true`; callers that need third-party type stubs or dependencies can supply a repository-relative `type_check_requirements` file. Missing imports fail rather than degrading boundary types to `Any`.
+Reusable GitHub Actions workflows require an immutable full commit SHA through `framework-ref`, so repositories cannot silently switch enforcement versions. Python callers opt into the strict connection gate with `type_check: true`; callers that need third-party type stubs or dependencies can supply a repository-relative `type_check_requirements` file. Missing imports fail rather than degrading boundary types to `Any`. The review workflow also requires the caller's `AI_GATEWAY_API_KEY` secret.
 
 ```yaml
 jobs:
@@ -67,8 +78,15 @@ jobs:
     with:
       framework-ref: <same-full-commit-sha>
       type_check: true
+
+  review:
+    uses: jtlacci/brick-framework/.github/workflows/review.yml@<full-commit-sha>
+    with:
+      framework-ref: <same-full-commit-sha>
+    secrets:
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
 ```
 
-Make the validation check required in branch protection.
+Make both the validation and review checks required in branch protection. GitHub withholds repository secrets from untrusted fork pull requests; those reviews intentionally fail closed until a maintainer runs the trusted review path with the secret available.
 
-Supporting another host language means adding equivalent structural and strict type-checking frontends. The brick/workflow contract does not otherwise depend on Python.
+Supporting another host language means adding an equivalent mechanical source frontend. The brick/workflow contract and Jev policy criteria do not otherwise depend on Python.
