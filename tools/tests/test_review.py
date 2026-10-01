@@ -105,14 +105,11 @@ class RoutingTests(Fixture):
         self.assertEqual(lanes["workflow"], [])
         self.assertEqual(unrouted, ["tools/lint_bricks.py", "bricks/AGENTS.md"])
 
-    def test_brick_docs_follow_the_touched_bricks(self) -> None:
+    def test_brick_docs_include_only_existing_nested_contracts(self) -> None:
         self.brick("plain")
         self.brick("other")
         docs = review.brick_docs(self.root, ["bricks/plain/src/logic.py", "bricks/plain/contract.py"])
-        self.assertEqual(
-            [d.relative_to(self.root).as_posix() for d in docs],
-            ["bricks/plain/input/AGENTS.md", "bricks/plain/runner/AGENTS.md", "bricks/plain/src/AGENTS.md"],
-        )
+        self.assertEqual(docs, [])
 
 
 class PromptTests(unittest.TestCase):

@@ -1,1 +1,1 @@
-"""Runner package used for brick-qualified smoke-test discovery."""
+"""Runner boundary for the example brick."""

@@ -1,27 +1,26 @@
-"""Typed, versioned boundary and ownership declarations for this brick."""
+"""Typed boundary and architecture facts for the example brick."""
 
-from typing import TypedDict
+from typing import NewType, TypedDict
 
 
 CONTRACT_VERSION = 1
-
-# The enforcement class this brick declares for itself: "strict" (the regular
-# brick), "pure" (output is a function of input alone), or "workflow" (invoked
-# as a whole, never depended on). A lane only adds rules. Omitting it means
-# "strict".
 LANE = "strict"
-
-# Map sibling brick names to "eventual" or "orchestrated".
 SIBLING_DEPENDENCIES: dict[str, str] = {}
-
-# Stable identifiers for application state owned exclusively by this brick.
-# Brick-local evidence under input/data and runner/runs is owned implicitly.
 OWNED_STATE: tuple[str, ...] = ()
+
+
+# Replace this placeholder with a domain name such as CustomerId or UsdCents.
+# A distinct boundary type prevents accidental structural wiring.
+BrickValue = NewType("BrickValue", int)
 
 
 class BrickInput(TypedDict):
     """Input accepted by run(). Replace with domain fields."""
 
+    value: BrickValue
+
 
 class BrickOutput(TypedDict):
     """Output returned by run(). Replace with domain fields."""
+
+    value: BrickValue

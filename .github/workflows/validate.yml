@@ -1,0 +1,82 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      framework-ref:
+        description: immutable framework revision whose linter should validate the caller
+        type: string
+        required: true
+      type_check:
+        description: run the strict Python connection type gate against the caller
+        type: boolean
+        required: false
+        default: false
+      type_check_requirements:
+        description: optional caller-relative requirements file for type stubs and dependencies
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: require immutable framework revision
+        if: github.event_name == 'workflow_call'
+        env:
+          FRAMEWORK_REF: ${{ inputs.framework-ref }}
+        run: |
+          if [[ ! "$FRAMEWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "framework-ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jtlacci/brick-framework
+          ref: ${{ inputs.framework-ref }}
+          path: .brick-framework
+        if: github.event_name == 'workflow_call'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install pinned connection type checker
+        if: github.event_name != 'workflow_call' || inputs.type_check
+        env:
+          FRAMEWORK_ROOT: ${{ github.event_name == 'workflow_call' && '.brick-framework' || '.' }}
+        run: python3 -m pip install -r "$FRAMEWORK_ROOT/requirements-typecheck.txt"
+
+      - name: install caller type dependencies
+        if: github.event_name == 'workflow_call' && inputs.type_check && inputs.type_check_requirements != ''
+        env:
+          CALLER_REQUIREMENTS: ${{ inputs.type_check_requirements }}
+        run: python3 -m pip install -r "$CALLER_REQUIREMENTS"
+
+      - name: validate host-language connections
+        if: github.event_name != 'workflow_call' || inputs.type_check
+        env:
+          FRAMEWORK_ROOT: ${{ github.event_name == 'workflow_call' && '.brick-framework' || '.' }}
+        run: python3 -m mypy --config-file "$FRAMEWORK_ROOT/mypy.ini" bricks workflows
+
+      - name: prove mismatched connections are rejected
+        if: github.event_name != 'workflow_call'
+        run: python3 tools/check_typing_fixture.py
+
+      - name: validate repository architecture
+        run: |
+          if [ "${{ github.event_name }}" = workflow_call ]; then
+            python3 .brick-framework/tools/model_repository.py --root . --check
+          else
+            python3 tools/model_repository.py --root . --check
+          fi
+
+      - name: test framework tools
+        if: github.repository == 'jtlacci/brick-framework'
+        run: python3 -m unittest discover -s tools/tests -t . -v
