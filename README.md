@@ -19,7 +19,7 @@ bricks/<brick_name>/
 - `src/` reaches external sources and sibling bricks only through its own `input/` adapters.
 - Expose only `run` to sibling bricks through the brick's top-level `__init__.py`.
 - Keep named adapter examples under `input/data/<adapter>/<case>.json` and recent runs under `runner/runs/`.
-- Sibling calls are fully brick-contained: they create their own run IDs and always use their own default saved mode.
+- Sibling calls always create their own run IDs. A workflow explicitly carries its mode into orchestrated I/O bricks; every other sibling call uses the callee's default saved mode.
 - Declare every sibling dependency and its `eventual` or `orchestrated` consistency policy in `contract.py`. The declared graph must be acyclic.
 - Declare stable identifiers for application state owned by the brick. One state resource has one owner.
 
@@ -67,7 +67,7 @@ run(inputs, *, fresh=False, save=False)
 | `fresh=True` | Call the real source | Unchanged |
 | `save=True` | Call the real source, redact and validate it | Atomically replace the named example |
 
-`save=True` implies a fresh call. A missing or mismatched saved example is an error, never an implicit live call. Neither option propagates when a sibling adapter calls another brick.
+`save=True` implies a fresh call. A missing or mismatched saved example is an error, never an implicit live call. Mode propagates only from a workflow to an `orchestrated` non-pure brick, through explicit `fresh=` and `save=` keywords. Pure and `eventual` dependencies stay in their default mode. Run IDs never propagate.
 
 Examples use stable paths and canonical JSON, so normal runs do not churn Git. An explicit save is the review point that may create a diff. Each saved example includes the capture run ID; run records and evidence can be correlated later without involving the runner in adapter persistence.
 

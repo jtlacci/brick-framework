@@ -35,8 +35,11 @@ Keep `bricks/__init__.py` so the standard-library test runner can discover smoke
 - `src` may import adapters from its own brick, but it may not directly import external clients or sibling bricks.
 - A sibling brick may be reached only through a sibling adapter that calls the sibling's `run` entry point.
 - Every sibling adapter must correspond to a declared sibling dependency.
-- Invocation mode and run identity never propagate across a brick boundary. A sibling adapter calls the sibling `run` with ordinary inputs and no `fresh` or `save` option; the sibling creates its own run ID and uses its default saved mode.
+- Run identity never propagates across a brick boundary; every sibling creates its own run ID.
+- A workflow adapter must pass both `fresh` and `save` explicitly when it calls an `orchestrated` non-pure sibling. The values must derive from the workflow's mode. The linter checks that both keywords are present; workflow smoke tests must prove the values are correct.
+- Pure siblings, `eventual` siblings, and every call made by a non-workflow brick receive ordinary inputs with no run-control options and use their default mode.
 - Do not import another brick's `src/`, `runner/`, configuration, or saved data.
+- Do not use `importlib`, `__import__`, or another dynamic import path to hide a dependency.
 - Do not package bricks for, or expose them to, consumers outside this repository.
 
 Do not add `__init__.py` merely to mark folders. Keep the repository `bricks/` file for discovery, the brick-level file for the internal entry point, and `runner/__init__.py`. Add `runner/tests/__init__.py` only when a `workflow` brick has smoke tests. The other folders use namespace-package behavior.

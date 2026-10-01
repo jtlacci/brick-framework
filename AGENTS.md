@@ -23,6 +23,7 @@ This repository uses Python file boilerplate to organize one codebase as discret
 - Every brick declares a typed, versioned input and output boundary in `contract.py`.
 - A brick exposes only its `run` entry point to sibling bricks.
 - External access crosses an external-source adapter; sibling-brick access crosses a sibling adapter.
+- Dynamic imports are forbidden because they hide brick boundaries from static inspection.
 - Every sibling dependency declares its consistency policy as `eventual` or `orchestrated`. Dependency cycles are not allowed; introduce or reshape a parent brick instead.
 - Every persistent application-state resource has exactly one owning brick. Brick-local evidence folders are owned implicitly by their brick.
 - Bricks are used only inside this repository. Do not package or expose them for outside consumers.

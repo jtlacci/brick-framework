@@ -17,7 +17,7 @@ This folder owns every external-source boundary and sibling-brick boundary for t
 - A sibling adapter calls only the sibling brick's `run` entry point.
 - Adapters are called by `src/` with a plain run context containing the owning brick's run ID, mode, and resolved adapter configuration.
 - Adapters never import or call `src/` or `runner/`.
-- A sibling adapter never forwards `fresh`, `save`, the parent run ID, or other run-control state. The sibling run remains fully contained and creates its own identity.
+- A sibling adapter never forwards the parent run ID or other identity state. A workflow adapter passes both `fresh` and `save`, derived from its context mode, only to an `orchestrated` non-pure sibling. Every other sibling call omits run-control options.
 
 ## Git-stable saved examples
 
