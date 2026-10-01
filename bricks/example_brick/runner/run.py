@@ -1,15 +1,9 @@
-"""The brick's repository-internal entry point."""
+"""The example brick's repository-internal entry point."""
 
 from ..contract import BrickInput, BrickOutput
+from ..src.logic import execute
 
 
-def run(
-    inputs: BrickInput, *, fresh: bool = False, save: bool = False
-) -> BrickOutput:
-    """Run the brick and return its output.
-
-    ``fresh`` performs this brick's external calls without changing tracked
-    examples. ``save`` implies fresh and replaces reviewed tracked examples.
-    Neither option is forwarded to sibling bricks.
-    """
-    raise NotImplementedError
+def run(inputs: BrickInput) -> BrickOutput:
+    """Run the brick. Domain implementations replace the example stub."""
+    return execute(inputs)
