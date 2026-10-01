@@ -29,22 +29,25 @@ def assigned_literal(tree: ast.Module, name: str) -> Any:
     return None
 
 
-def read_contract(brick: Path) -> tuple[dict[str, str], tuple[str, ...]]:
-    """Read one brick's declared sibling dependencies and owned state."""
+def read_contract(brick: Path) -> tuple[dict[str, str], tuple[str, ...], str]:
+    """Read one brick's dependencies, owned state, and lane."""
     path = brick / "contract.py"
     if not path.is_file():
-        return {}, ()
+        return {}, (), "strict"
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (OSError, SyntaxError):
-        return {}, ()
+        return {}, (), "strict"
 
     dependencies = assigned_literal(tree, "SIBLING_DEPENDENCIES")
     owned_state = assigned_literal(tree, "OWNED_STATE")
+    lane = assigned_literal(tree, "LANE")
     if not isinstance(dependencies, dict):
         dependencies = {}
     if not isinstance(owned_state, (tuple, list)):
         owned_state = ()
+    if lane not in {"strict", "pure", "workflow"}:
+        lane = "strict"
     return (
         {
             name: mode
@@ -52,6 +55,7 @@ def read_contract(brick: Path) -> tuple[dict[str, str], tuple[str, ...]]:
             if isinstance(name, str) and isinstance(mode, str)
         },
         tuple(item for item in owned_state if isinstance(item, str) and item),
+        lane,
     )
 
 
@@ -60,18 +64,18 @@ def escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', "&quot;")
 
 
-def node_label(name: str, owned_state: tuple[str, ...]) -> str:
-    """Build the node label, listing the state the brick owns."""
-    lines = [escape(name), *(escape(resource) for resource in owned_state)]
+def node_label(name: str, owned_state: tuple[str, ...], lane: str) -> str:
+    """Build an explicit brick label with lane and owned state."""
+    lines = [f"BRICK: {escape(name)}", f"lane: {escape(lane)}", *(escape(resource) for resource in owned_state)]
     return "<br/>".join(lines)
 
 
-def render(contracts: dict[str, tuple[dict[str, str], tuple[str, ...]]]) -> str:
+def render(contracts: dict[str, tuple[dict[str, str], tuple[str, ...], str]]) -> str:
     """Render the declared graph as a Mermaid flowchart."""
     names = sorted(contracts)
     depended_on = {
         dependency
-        for dependencies, _ in contracts.values()
+        for dependencies, _, _ in contracts.values()
         for dependency in dependencies
         if dependency in contracts
     }
@@ -81,8 +85,8 @@ def render(contracts: dict[str, tuple[dict[str, str], tuple[str, ...]]]) -> str:
         "flowchart TD",
     ]
     for name in names:
-        _, owned_state = contracts[name]
-        lines.append(f'    {name}["{node_label(name, owned_state)}"]')
+        _, owned_state, lane = contracts[name]
+        lines.append(f'    {name}["{node_label(name, owned_state, lane)}"]')
 
     edges = [
         f"    {name} {'-.->' if mode == 'eventual' else '-->'} {dependency}"
@@ -98,6 +102,17 @@ def render(contracts: dict[str, tuple[dict[str, str], tuple[str, ...]]]) -> str:
         lines.append("")
         lines.append("    classDef topLevel stroke-width:3px")
         lines.append(f"    class {','.join(top_level)} topLevel")
+    for lane in ("workflow", "pure", "strict"):
+        members = [name for name in names if contracts[name][2] == lane]
+        if members:
+            lines.append(f"    class {','.join(members)} {lane}")
+    lines.extend(
+        [
+            "    classDef workflow fill:#f59e0b,stroke:#92400e,color:#111827",
+            "    classDef pure fill:#bfdbfe,stroke:#1d4ed8,color:#111827",
+            "    classDef strict fill:#bbf7d0,stroke:#15803d,color:#111827",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

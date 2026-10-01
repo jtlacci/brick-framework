@@ -164,7 +164,12 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     return Contract(version, dict(dependencies), tuple(owned_state), lane)
 
 
-def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
+def lint_python(
+    brick: Path,
+    contract: Contract,
+    contracts: dict[str, Contract],
+    lint: Lint,
+) -> None:
     entry = lint.tree(brick / "__init__.py")
     if entry:
         imports_run = any(
@@ -209,6 +214,17 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
         relative = path.relative_to(brick).parts
         role = relative[0] if len(relative) > 1 else "entry"
         adapter = relative[:2] == ("input", "adapters")
+        sibling_bindings: dict[str, str] = {}
+        called_sibling_bindings: set[str] = set()
+        if adapter:
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or not node.module:
+                    continue
+                parts = node.module.split(".")
+                if len(parts) == 2 and parts[0] == "bricks" and parts[1] != brick.name:
+                    for imported in node.names:
+                        if imported.name == "run":
+                            sibling_bindings[imported.asname or imported.name] = parts[1]
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.ImportFrom):
@@ -217,6 +233,8 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
                         lint.add(path, "relative import may not escape the brick")
                 for module in imported_modules(node):
                     parts = module.lstrip(".").split(".")
+                    if parts[0] == "importlib":
+                        lint.add(path, "dynamic imports hide brick boundaries")
                     if role == "runner" and "input" in parts:
                         lint.add(path, "runner may not import input")
                     if adapter and ({"src", "runner"} & set(parts)):
@@ -240,10 +258,39 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
                             lint.add(path, f"sibling dependency {parts[1]!r} is not declared")
             if role == "src" and isinstance(node, ast.Call) and called_name(node) == "open":
                 lint.add(path, "src filesystem access must use an adapter")
-            if adapter and isinstance(node, ast.Call) and called_name(node) == "run":
+            if isinstance(node, ast.Call) and called_name(node) == "__import__":
+                lint.add(path, "dynamic imports hide brick boundaries")
+            if (
+                adapter
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in sibling_bindings
+            ):
+                dependency = sibling_bindings[node.func.id]
+                called_sibling_bindings.add(node.func.id)
+                if any(keyword.arg is None for keyword in node.keywords):
+                    lint.add(path, "sibling run may not receive expanded keyword arguments")
+                    continue
                 forwarded = {word.arg for word in node.keywords} & {"fresh", "save"}
-                if forwarded:
-                    lint.add(path, "sibling run may not receive fresh or save")
+                target = contracts.get(dependency)
+                inherits_mode = (
+                    contract.lane == "workflow"
+                    and contract.dependencies.get(dependency) == "orchestrated"
+                    and target is not None
+                    and target.lane != "pure"
+                )
+                if inherits_mode and forwarded != {"fresh", "save"}:
+                    lint.add(
+                        path,
+                        "workflow call to an orchestrated I/O brick must pass both fresh and save",
+                    )
+                elif not inherits_mode and forwarded:
+                    lint.add(
+                        path,
+                        "only a workflow call to an orchestrated I/O brick may pass fresh and save",
+                    )
+        for binding in sibling_bindings.keys() - called_sibling_bindings:
+            lint.add(path, f"sibling run import {binding!r} must be called directly")
 
     for dependency in contract.dependencies.keys() - actual_dependencies:
         lint.add(brick / "contract.py", f"declared dependency {dependency!r} has no static adapter import", warning=True)
@@ -433,14 +480,19 @@ LANES = {
 }
 
 
-def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
+def lint_brick(
+    brick: Path,
+    contract: Contract,
+    contracts: dict[str, Contract],
+    lint: Lint,
+) -> None:
     for relative in REQUIRED:
         if not (brick / relative).exists():
             lint.add(brick / relative, "required brick path is missing")
     config_path = brick / "input/config.yml"
     config = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
     limits = {key: config_number(config, key, lint, config_path) for key in CONFIG_DEFAULTS}
-    lint_python(brick, contract, lint)
+    lint_python(brick, contract, contracts, lint)
     lint_records(brick, limits, lint)
     lint_smokes(brick, contract, lint)
     if contract.lane != "workflow" and (brick / "__main__.py").exists():
@@ -518,7 +570,7 @@ def lint_repo(root: Path) -> Lint:
         contracts = {brick.name: lint_contract(brick, lint) for brick in brick_paths}
         lint_graph(brick_paths, contracts, lint)
         for brick in brick_paths:
-            lint_brick(brick, contracts[brick.name], lint)
+            lint_brick(brick, contracts[brick.name], contracts, lint)
     else:
         lint.add(bricks, "bricks directory is missing")
     return lint

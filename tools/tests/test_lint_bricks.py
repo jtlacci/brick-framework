@@ -85,6 +85,19 @@ class BoilerplateTests(Fixture):
         (brick / "src/logic.py").write_text("import requests\n", encoding="utf-8")
         self.assertError("src imports direct-I/O module 'requests'")
 
+    def test_dynamic_importlib_is_rejected(self) -> None:
+        brick = self.brick()
+        (brick / "src/logic.py").write_text(
+            'from importlib import import_module\n\nimport_module("bricks.hidden")\n',
+            encoding="utf-8",
+        )
+        self.assertError("dynamic imports hide brick boundaries")
+
+    def test_builtin_dynamic_import_is_rejected(self) -> None:
+        brick = self.brick()
+        (brick / "src/logic.py").write_text('__import__("bricks.hidden")\n', encoding="utf-8")
+        self.assertError("dynamic imports hide brick boundaries")
+
 
 class LaneTests(Fixture):
     def test_absent_lane_is_strict(self) -> None:
@@ -246,6 +259,73 @@ class WorkflowLaneTests(Fixture):
         # them. Now the brick says so, or it cannot.
         self.smoke(self.brick())
         self.assertError("runner/tests: smoke tests belong only to workflow bricks")
+
+    def sibling_adapter(self, brick: Path, dependency: str, call: str) -> None:
+        (brick / f"input/adapters/{dependency}.py").write_text(
+            f"from bricks.{dependency} import run as sibling_run\n\n\n"
+            f"def invoke(inputs, context):\n    return sibling_run(inputs, {call})\n",
+            encoding="utf-8",
+        )
+
+    def test_workflow_forwards_mode_to_orchestrated_io_brick(self) -> None:
+        self.brick("storage")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"storage": "orchestrated"}')
+        self.sibling_adapter(
+            flow,
+            "storage",
+            'fresh=context["mode"] == "fresh", save=context["mode"] == "save"',
+        )
+        self.assertClean()
+
+    def test_workflow_must_forward_both_mode_flags_to_orchestrated_io_brick(self) -> None:
+        self.brick("storage")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"storage": "orchestrated"}')
+        self.sibling_adapter(flow, "storage", 'fresh=context["mode"] == "fresh"')
+        self.assertError("must pass both fresh and save")
+
+    def test_workflow_does_not_forward_mode_to_orchestrated_pure_brick(self) -> None:
+        self.pure_brick("document")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"document": "orchestrated"}')
+        self.sibling_adapter(flow, "document", "")
+        self.assertClean()
+
+    def test_eventual_dependency_may_not_receive_mode(self) -> None:
+        self.brick("storage")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"storage": "eventual"}')
+        self.sibling_adapter(flow, "storage", "fresh=True, save=False")
+        self.assertError("only a workflow call to an orchestrated I/O brick")
+
+    def test_non_workflow_may_not_forward_mode(self) -> None:
+        self.brick("storage")
+        caller = self.brick("caller")
+        self.contract(caller, SIBLING_DEPENDENCIES='{"storage": "orchestrated"}')
+        self.sibling_adapter(caller, "storage", "fresh=True, save=False")
+        self.assertError("only a workflow call to an orchestrated I/O brick")
+
+    def test_sibling_call_may_not_hide_mode_in_expanded_keywords(self) -> None:
+        self.brick("storage")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"storage": "orchestrated"}')
+        self.sibling_adapter(flow, "storage", "**context")
+        self.assertError("sibling run may not receive expanded keyword arguments")
+
+    def test_sibling_run_may_not_be_hidden_behind_an_alias(self) -> None:
+        self.brick("storage")
+        flow = self.workflow_brick("flow")
+        self.contract(flow, SIBLING_DEPENDENCIES='{"storage": "orchestrated"}')
+        path = flow / "input/adapters/storage.py"
+        path.write_text(
+            "from bricks.storage import run as sibling_run\n\n"
+            "hidden = sibling_run\n\n"
+            "def invoke(inputs, context):\n"
+            "    return hidden(inputs, fresh=True, save=False)\n",
+            encoding="utf-8",
+        )
+        self.assertError("sibling run import 'sibling_run' must be called directly")
 
 
 if __name__ == "__main__":
