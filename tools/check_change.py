@@ -39,10 +39,12 @@ def git(root: Path, *args: str) -> str:
 
 
 def changed_files(root: Path, base: str | None, head: str | None) -> list[str]:
+    # --no-renames: a rename is a deletion and an addition, and both paths count.
+    # Otherwise `git mv contract.py src/x.py` would show only the code path.
     if base and head:
-        out = git(root, "diff", "--name-only", f"{base}...{head}")
+        out = git(root, "diff", "--name-only", "--no-renames", f"{base}...{head}")
     else:
-        out = git(root, "diff", "--name-only", "HEAD")
+        out = git(root, "diff", "--name-only", "--no-renames", "HEAD")
         out += git(root, "ls-files", "--others", "--exclude-standard")
     return sorted({line for line in out.splitlines() if line})
 

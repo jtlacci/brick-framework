@@ -98,6 +98,10 @@ def check(policy: Any) -> list[str]:
     ):
         errors.append("seeds must be a non-empty list of integers")
 
+    cap = policy.get("max_out_of_evidence", 0.05)
+    if not isinstance(cap, (int, float)) or isinstance(cap, bool) or not 0 <= cap < 1:
+        errors.append("max_out_of_evidence must be a share from 0 up to (not including) 1")
+
     horizon = policy.get("label_horizon_seconds", 0)
     if not isinstance(horizon, (int, float)) or isinstance(horizon, bool) or horizon < 0:
         errors.append("label_horizon_seconds must be a number of seconds, 0 or more")

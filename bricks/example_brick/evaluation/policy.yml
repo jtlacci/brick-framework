@@ -29,5 +29,10 @@ selection:
 # Seeds for generate() and for any seeded part of an evaluation.
 seeds: [1, 2, 3]
 
-# score() receives the records captured up to this many seconds after each case.
+# score() receives the live records captured up to this many seconds after each case.
 label_horizon_seconds: 0
+
+# A case whose request has no recording is out of evidence: neither a pass nor
+# a fail. A trial fails when more than this share of its cases are out of
+# evidence, so a candidate cannot skip hard cases.
+max_out_of_evidence: 0.05

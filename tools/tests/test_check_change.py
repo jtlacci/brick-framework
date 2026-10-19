@@ -63,6 +63,15 @@ class ChangeCheckTests(unittest.TestCase):
         groups = self.change("bricks/demo/evaluation/evaluate.py")
         self.assertIn("bricks/demo/evaluation/evaluate.py", [p for p, _ in groups[policy.EVALUATION]])
 
+    def test_a_rename_shows_both_paths(self) -> None:
+        git(self.root, "mv", "bricks/demo/evaluation/evaluate.py", "bricks/demo/src/evaluate.py")
+        git(self.root, "mv", "bricks/demo/contract.py", "bricks/demo/src/contract_copy.py")
+        files = check_change.changed_files(self.root, None, None)
+        groups = check_change.classify_change(self.root, self.base, files)
+        self.assertIn("bricks/demo/evaluation/evaluate.py", [p for p, _ in groups[policy.EVALUATION]])
+        self.assertIn("bricks/demo/contract.py", [p for p, _ in groups[policy.HUMAN]])
+        self.assertTrue(groups[policy.CODE])
+
     def test_new_brick_is_human(self) -> None:
         groups = self.change("bricks/fresh/src/logic.py")
         self.assertEqual([p for p, _ in groups[policy.HUMAN]], ["bricks/fresh/src/logic.py"])
