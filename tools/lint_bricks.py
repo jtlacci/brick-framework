@@ -6,11 +6,15 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
-import re
 import sys
 from typing import Any
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import policy as eval_policy  # type: ignore[no-redef]
+else:
+    from . import policy as eval_policy
 
 
 REQUIRED = (
@@ -19,28 +23,32 @@ REQUIRED = (
     "input/AGENTS.md",
     "input/adapters",
     "input/config.yml",
-    "input/data",
     "runner/AGENTS.md",
     "runner/__init__.py",
-    "runner/rng.py",
     "runner/run.py",
-    "runner/runs",
     "src/AGENTS.md",
+    "evaluation/AGENTS.md",
+    "evaluation/policy.yml",
+    "evaluation/evaluate.py",
+    "evaluation/data.lock",
 )
-CONFIG_DEFAULTS = {
-    "runs": 10,
-    "saved_examples_per_adapter": 3,
-    "max_evidence_bytes": 122_880,
-    "max_run_record_bytes": 122_880,
+# Removed with saved mode: the linter rejects these rather than ignoring them.
+RETIRED = {
+    "input/evidence.py": "saved mode is gone; adapters call ctx['io']",
+    "input/data": "saved examples are gone; the runner stores evaluation data",
+    "runner/runs": "run records are gone; the runtime captures runs",
+    "runner/rng.py": "the runtime creates run IDs",
+    "runner/tests": "smoke tests are gone; evaluation lives in evaluation/",
+    "src/tests": "unit tests are gone; check invariants as properties in evaluation/",
 }
 DIRECT_IO = {
-    "boto3", "ftplib", "httpx", "os", "pathlib", "psycopg", "requests",
-    "shutil", "smtplib", "socket", "sqlite3", "subprocess", "urllib",
+    "boto3", "ftplib", "http", "httpx", "importlib", "io", "os", "pathlib", "psycopg",
+    "requests", "shutil", "smtplib", "socket", "sqlite3", "ssl", "subprocess", "urllib",
+    "asyncio", "aiohttp", "websockets", "ctypes",
 }
-SENSITIVE = {
-    "access_token", "api_key", "authorization", "client_secret", "cookie", "cookies",
-    "headers", "password", "refresh_token", "secret", "set-cookie", "token", "x-api-key",
-}
+EVALUATE_FUNCTIONS = ("build", "score", "generate")
+GATE_OPERATORS = {">=", "<=", ">", "<"}
+FRAMEWORK_MODULES = {"_runtime"}
 
 
 @dataclass
@@ -49,6 +57,7 @@ class Contract:
     dependencies: dict[str, str] = field(default_factory=dict)
     owned_state: tuple[str, ...] = ()
     lane: str = "strict"
+    deterministic: bool = False
 
 
 class Lint:
@@ -75,17 +84,14 @@ class Lint:
             return None
 
 
-def config_number(text: str, key: str, lint: Lint, path: Path) -> int:
-    match = re.search(rf"(?m)^\s*{re.escape(key)}:\s*(\d+)\s*(?:#.*)?$", text)
-    if not match or int(match.group(1)) < 1:
-        lint.add(path, f"missing positive integer setting {key!r}")
-        return CONFIG_DEFAULTS[key]
-    return int(match.group(1))
-
-
 def imported_modules(node: ast.Import | ast.ImportFrom) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
+    if node.level == 0 and node.module == "bricks":
+        # `from bricks import _runtime` names a module, `from bricks import x` a brick.
+        framework = [f"bricks.{alias.name}" for alias in node.names if alias.name.startswith("_")]
+        if framework:
+            return framework
     return ["." * node.level + (node.module or "")]
 
 
@@ -133,6 +139,7 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     dependencies = assigned_literal(tree, "SIBLING_DEPENDENCIES")
     owned_state = assigned_literal(tree, "OWNED_STATE")
     lane = assigned_literal(tree, "LANE")
+    deterministic = assigned_literal(tree, "DETERMINISTIC")
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
@@ -151,6 +158,9 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     ):
         lint.add(path, "OWNED_STATE must contain non-empty resource identifiers")
         owned_state = ()
+    if not isinstance(deterministic, bool):
+        lint.add(path, "DETERMINISTIC must be True or False")
+        deterministic = False
     for class_name in ("BrickInput", "BrickOutput"):
         declaration = classes.get(class_name)
         if not declaration or not any(annotation_name(base) == "TypedDict" for base in declaration.bases):
@@ -161,7 +171,7 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
         lint.add(path, f"LANE must be one of {', '.join(sorted(LANES))}")
         lane = "strict"
 
-    return Contract(version, dict(dependencies), tuple(owned_state), lane)
+    return Contract(version, dict(dependencies), tuple(owned_state), lane, deterministic)
 
 
 def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
@@ -193,11 +203,13 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
             (node for node in runner.body if isinstance(node, ast.FunctionDef) and node.name == "run"),
             None,
         )
-        options = {arg.arg for arg in function.args.kwonlyargs} if function else set()
-        if not {"fresh", "save"}.issubset(options):
-            lint.add(brick / "runner/run.py", "run needs keyword-only fresh and save options")
-        if function:
-            input_type = annotation_name(function.args.args[0].annotation) if function.args.args else ""
+        if function is None:
+            lint.add(brick / "runner/run.py", "must define run")
+        else:
+            args = function.args
+            if args.kwonlyargs or args.vararg or args.kwarg or len(args.args) != 1:
+                lint.add(brick / "runner/run.py", "run takes exactly one argument, the brick input, and no mode options")
+            input_type = annotation_name(args.args[0].annotation) if args.args else ""
             if input_type != "BrickInput" or annotation_name(function.returns) != "BrickOutput":
                 lint.add(brick / "runner/run.py", "run must use BrickInput and BrickOutput annotations")
 
@@ -209,6 +221,7 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
         relative = path.relative_to(brick).parts
         role = relative[0] if len(relative) > 1 else "entry"
         adapter = relative[:2] == ("input", "adapters")
+        sibling_runs: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.ImportFrom):
@@ -219,13 +232,30 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
                     parts = module.lstrip(".").split(".")
                     if role == "runner" and "input" in parts:
                         lint.add(path, "runner may not import input")
+                    if role != "evaluation" and "evaluation" in parts:
+                        lint.add(path, "only evaluation/ may import evaluation/")
                     if adapter and ({"src", "runner"} & set(parts)):
                         lint.add(path, "adapter may not import src or runner")
-                    if role == "src":
+                    if role in {"src", "evaluation"}:
                         if "runner" in parts:
-                            lint.add(path, "src may not import runner")
+                            lint.add(path, f"{role} may not import runner")
                         if parts[0] in DIRECT_IO:
-                            lint.add(path, f"src imports direct-I/O module {parts[0]!r}")
+                            lint.add(path, f"{role} imports direct-I/O module {parts[0]!r}")
+                    if role == "evaluation":
+                        lint_evaluation_import(path, node, module, parts, brick, lint)
+                    if len(parts) > 1 and parts[0] == "bricks" and parts[1].startswith("_"):
+                        if parts[1] not in FRAMEWORK_MODULES:
+                            lint.add(path, f"bricks.{parts[1]} is not a framework module bricks may use")
+                        elif role != "runner":
+                            lint.add(path, "only runner/ may import the framework runtime")
+                        continue
+                    if (
+                        isinstance(node, ast.ImportFrom)
+                        and parts == ["bricks"]
+                        and any(not alias.name.startswith("_") for alias in node.names)
+                    ):
+                        lint.add(path, "import a sibling's run as from bricks.<name> import run")
+                        continue
                     if len(parts) > 1 and parts[0] == "bricks" and parts[1] != brick.name:
                         actual_dependencies.add(parts[1])
                         if not adapter:
@@ -236,118 +266,94 @@ def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
                             or [n.name for n in node.names] != ["run"]
                         ):
                             lint.add(path, "sibling adapter may import only run")
+                        else:
+                            sibling_runs.update(alias.asname or alias.name for alias in node.names)
                         if parts[1] not in contract.dependencies:
                             lint.add(path, f"sibling dependency {parts[1]!r} is not declared")
-            if role == "src" and isinstance(node, ast.Call) and called_name(node) == "open":
-                lint.add(path, "src filesystem access must use an adapter")
-            if adapter and isinstance(node, ast.Call) and called_name(node) == "run":
-                forwarded = {word.arg for word in node.keywords} & {"fresh", "save"}
-                if forwarded:
-                    lint.add(path, "sibling run may not receive fresh or save")
+            if role in {"src", "evaluation"} and isinstance(node, ast.Call) and called_name(node) in {"open", "__import__"}:
+                lint.add(path, f"{role} may not call {called_name(node)}(); do I/O through an adapter")
+        if adapter:
+            lint_adapter(path, tree, sibling_runs, lint)
 
     for dependency in contract.dependencies.keys() - actual_dependencies:
         lint.add(brick / "contract.py", f"declared dependency {dependency!r} has no static adapter import", warning=True)
 
 
-def read_json(path: Path, lint: Lint) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        lint.add(path, f"invalid JSON: {exc}")
-        return None
+def lint_evaluation_import(
+    path: Path, node: ast.Import | ast.ImportFrom, module: str, parts: list[str], brick: Path, lint: Lint
+) -> None:
+    """evaluation/ sees the brick only through its contract types."""
+    if isinstance(node, ast.ImportFrom) and node.level:
+        if node.level == 1:
+            return  # its own folder
+        if node.level == 2 and node.module == "contract":
+            return
+        lint.add(path, "evaluation/ may import only this brick's contract, never run or its parts")
+    elif parts[0] == "bricks":
+        if module != f"bricks.{brick.name}.contract":
+            lint.add(path, "evaluation/ may import only this brick's contract, never run or its parts")
 
 
-def check_secrets(path: Path, value: Any, lint: Lint) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key.lower() in SENSITIVE and item != "<redacted>":
-                lint.add(path, f"sensitive field {key!r} is not redacted")
-            check_secrets(path, item, lint)
-    elif isinstance(value, list):
-        for item in value:
-            check_secrets(path, item, lint)
-
-
-def lint_records(brick: Path, limits: dict[str, int], lint: Lint) -> None:
-    data = brick / "input/data"
-    counts: dict[str, int] = {}
-    for path in sorted(data.rglob("*.json")):
-        relative = path.relative_to(data)
-        if len(relative.parts) != 2:
-            lint.add(path, "evidence path must be <adapter>/<case>.json")
+def lint_adapter(path: Path, tree: ast.Module, sibling_runs: set[str], lint: Lint) -> None:
+    """Every adapter call goes through ctx["io"]; a sibling's run is passed, never called."""
+    routed = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
             continue
-        adapter, filename = relative.parts
-        case = Path(filename).stem
-        counts[adapter] = counts.get(adapter, 0) + 1
-        if path.stat().st_size > limits["max_evidence_bytes"]:
-            lint.add(path, "evidence exceeds max_evidence_bytes")
-        record = read_json(path, lint)
-        if not isinstance(record, dict):
-            continue
-        required = {
-            "schema_version",
-            "contract_version",
-            "adapter",
-            "case",
-            "capture_run_id",
-            "request",
-        }
-        if required - record.keys():
-            lint.add(path, "evidence is missing required fields")
-        if record.get("adapter") != adapter or record.get("case") != case:
-            lint.add(path, "adapter and case must match the path")
-        if ("response" in record) == ("error" in record):
-            lint.add(path, "evidence needs exactly one of response or error")
-        canonical = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
-        if path.read_bytes() != canonical:
-            lint.add(path, "evidence JSON is not canonical")
-        check_secrets(path, record, lint)
-    for adapter, count in counts.items():
-        if count > limits["saved_examples_per_adapter"]:
-            lint.add(data / adapter, "too many saved examples")
-
-    runs = sorted((brick / "runner/runs").glob("*.json"))
-    if len(runs) > limits["runs"]:
-        lint.add(brick / "runner/runs", "too many retained run records")
-    for path in runs:
-        if path.stat().st_size > limits["max_run_record_bytes"]:
-            lint.add(path, "run record exceeds max_run_record_bytes")
-        read_json(path, lint)
+        name = called_name(node)
+        if isinstance(node.func, ast.Attribute) and name in {"external", "sibling"}:
+            routed = True
+        if isinstance(node.func, ast.Name) and node.func.id in sibling_runs:
+            lint.add(path, "call a sibling through ctx['io'].sibling(name, request, run), never directly")
+    if not routed:
+        lint.add(path, "adapter makes no call through ctx['io'].external or ctx['io'].sibling", warning=True)
 
 
-def lint_smokes(brick: Path, contract: Contract, lint: Lint) -> None:
-    tests_dir = brick / "runner/tests"
-    tests = sorted(tests_dir.glob("test_*.py")) if tests_dir.exists() else []
-    if not tests:
-        return
-    if not (tests_dir / "__init__.py").is_file():
-        lint.add(tests_dir / "__init__.py", "smoke-test package marker is missing")
-    if contract.lane != "workflow":
-        lint.add(tests_dir, "smoke tests belong only to workflow bricks")
-    if len(tests) > 3:
-        lint.add(tests_dir, "a workflow may have at most three smoke-test files")
-    for path in tests:
-        tree = lint.tree(path)
-        if not tree:
-            continue
-        if any(
-            isinstance(node, ast.Attribute) and node.attr.startswith("skip")
-            for node in ast.walk(tree)
+def lint_evaluation(brick: Path, lint: Lint) -> dict[str, Any] | None:
+    folder = brick / "evaluation"
+    tree = lint.tree(folder / "evaluate.py")
+    if tree:
+        defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        for function in EVALUATE_FUNCTIONS:
+            if function not in defined:
+                lint.add(folder / "evaluate.py", f"must define {function}()")
+        gates = assigned_literal(tree, "GATES")
+        if not isinstance(gates, (tuple, list)) or not all(
+            isinstance(gate, (tuple, list)) and len(gate) == 3
+            and isinstance(gate[0], str) and gate[1] in GATE_OPERATORS
+            and isinstance(gate[2], (int, float)) and not isinstance(gate[2], bool)
+            for gate in gates
         ):
-            lint.add(path, "contains a skipped smoke test; it proves no integration", warning=True)
-        calls_run = any(
-            isinstance(node, ast.Call) and called_name(node) == "run" for node in ast.walk(tree)
+            lint.add(folder / "evaluate.py", "GATES must be a literal tuple of (term, operator, threshold)")
+
+    lock = folder / "data.lock"
+    if lock.is_file():
+        text = lock.read_text(encoding="utf-8").strip()
+        valid = text == "unpinned" or (
+            text.startswith("sha256:") and len(text) == 71
+            and all(c in "0123456789abcdef" for c in text[7:])
         )
-        if not calls_run:
-            lint.add(path, "smoke test must call the brick's public run")
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level:
-                lint.add(path, "smoke test must import run from the top-level brick")
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("bricks"):
-                if node.module != f"bricks.{brick.name}" or [item.name for item in node.names] != ["run"]:
-                    lint.add(path, "smoke test may import only its brick's top-level run")
-            if isinstance(node, ast.Import) and any(item.name.startswith("bricks") for item in node.names):
-                lint.add(path, "smoke test must use from bricks.<name> import run")
+        if not valid:
+            lint.add(lock, "data.lock must hold 'unpinned' or a sha256:<64 hex> dataset hash")
+
+    path = folder / "policy.yml"
+    if not path.is_file():
+        return None
+    try:
+        policy = eval_policy.load(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        lint.add(path, f"cannot parse policy: {exc}")
+        return None
+    problems = eval_policy.check(policy)
+    for problem in problems:
+        lint.add(path, problem)
+    return None if problems else policy
+
+
+def lint_retired(brick: Path, lint: Lint) -> None:
+    for relative, reason in RETIRED.items():
+        if (brick / relative).exists():
+            lint.add(brick / relative, f"retired path: {reason}")
 
 
 def lint_strict(brick: Path, contract: Contract, lint: Lint) -> None:
@@ -364,11 +370,11 @@ def lint_pure(brick: Path, contract: Contract, lint: Lint) -> None:
     Adapters are the only sanctioned channel to the outside, so a pure brick
     has none, and therefore no sibling dependencies either. The direct-I/O
     ban every ``src/`` already carries widens to the whole brick, joined by
-    ``random`` and ``time``, and by the clock calls the ``src/`` contract has
-    always forbidden in prose. ``runner/`` is the one exemption: it writes
-    run records and owns ``rng.py``, so it keeps the filesystem and
-    randomness the rest of the brick gives up. ``datetime`` stays importable:
-    arithmetic on a caller-supplied time is pure; reading ``now()`` is not.
+    ``random`` and ``time``, and by clock calls. ``runner/`` is exempt because
+    it hands the run to the framework runtime; ``evaluation/`` is exempt because
+    it is not the brick: it is how the brick is judged, and it may seed its own
+    generators. ``datetime`` stays importable: arithmetic on a caller-supplied
+    time is pure; reading ``now()`` is not.
     """
     adapters = sorted((brick / "input/adapters").glob("*.py"))
     for path in adapters:
@@ -377,7 +383,7 @@ def lint_pure(brick: Path, contract: Contract, lint: Lint) -> None:
         lint.add(brick / "contract.py", "pure brick may not declare sibling dependencies")
     for path in brick.rglob("*.py"):
         relative = path.relative_to(brick).parts
-        if relative[0] == "runner":
+        if relative[0] in {"runner", "evaluation"}:
             continue
         tree = lint.tree(path)
         if not tree:
@@ -406,9 +412,7 @@ def lint_workflow(brick: Path, contract: Contract, lint: Lint) -> None:
     that door may import nothing from the brick tree except the brick's own
     ``run`` -- the same rule a sibling adapter lives under, applied to the
     outside world. In the graph: no contract may list a workflow as a sibling
-    dependency. Smoke tests, which prove integration through ``run``, belong
-    only here; before lanes that was derived from the graph (a brick nothing
-    depended on) and now the brick says so.
+    dependency.
     """
     door = lint.tree(brick / "__main__.py")
     if not door:
@@ -420,6 +424,8 @@ def lint_workflow(brick: Path, contract: Contract, lint: Lint) -> None:
         for module in imported_modules(node):
             inside = module.startswith(".") or module.split(".")[0] == "bricks"
             if not inside:
+                if module.split(".")[0] in DIRECT_IO - {"os"}:
+                    lint.add(brick / "__main__.py", f"__main__ imports direct-I/O module {module.split('.')[0]!r}; route I/O through an adapter")
                 continue
             names = [item.name for item in node.names]
             if not (isinstance(node, ast.ImportFrom) and module in own_run and names == ["run"]):
@@ -437,12 +443,9 @@ def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
     for relative in REQUIRED:
         if not (brick / relative).exists():
             lint.add(brick / relative, "required brick path is missing")
-    config_path = brick / "input/config.yml"
-    config = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    limits = {key: config_number(config, key, lint, config_path) for key in CONFIG_DEFAULTS}
+    lint_retired(brick, lint)
     lint_python(brick, contract, lint)
-    lint_records(brick, limits, lint)
-    lint_smokes(brick, contract, lint)
+    lint_evaluation(brick, lint)
     if contract.lane != "workflow" and (brick / "__main__.py").exists():
         lint.add(brick / "__main__.py", "only a workflow brick may have __main__.py")
     LANES[contract.lane](brick, contract, lint)
@@ -455,25 +458,25 @@ def lint_graph(
     owners: dict[str, str] = {}
     graph: dict[str, set[str]] = {name: set() for name in names}
 
+    def where(name: str) -> Path:
+        return next(brick for brick in bricks if brick.name == name) / "contract.py"
+
     for name, contract in contracts.items():
         for dependency in contract.dependencies:
             if dependency == name:
-                lint.add(next(brick for brick in bricks if brick.name == name) / "contract.py", "brick may not depend on itself")
+                lint.add(where(name), "brick may not depend on itself")
             elif dependency not in names:
-                lint.add(next(brick for brick in bricks if brick.name == name) / "contract.py", f"unknown sibling dependency {dependency!r}")
+                lint.add(where(name), f"unknown sibling dependency {dependency!r}")
             else:
                 if contracts[dependency].lane == "workflow":
                     lint.add(
-                        next(brick for brick in bricks if brick.name == name) / "contract.py",
+                        where(name),
                         f"sibling dependency {dependency!r} is a workflow brick; a workflow is invoked as a whole, not depended on",
                     )
                 graph[name].add(dependency)
         for resource in contract.owned_state:
             if resource in owners:
-                lint.add(
-                    next(brick for brick in bricks if brick.name == name) / "contract.py",
-                    f"state {resource!r} is already owned by {owners[resource]!r}",
-                )
+                lint.add(where(name), f"state {resource!r} is already owned by {owners[resource]!r}")
             else:
                 owners[resource] = name
 
@@ -504,16 +507,16 @@ def lint_repo(root: Path) -> Lint:
     """
     lint = Lint(root)
     bricks = root / "bricks"
-    for path in (root / "AGENTS.md", bricks / "AGENTS.md"):
+    for path in (root / "AGENTS.md", bricks / "AGENTS.md", bricks / "_runtime.py", bricks / "_yaml.py"):
         if not path.is_file():
-            lint.add(path, "required inherited contract is missing")
+            lint.add(path, "required framework file is missing")
     for path in root.rglob("BRICK.md"):
         lint.add(path, "contract must be named AGENTS.md")
     if bricks.is_dir():
         brick_paths = sorted(
             path
             for path in bricks.iterdir()
-            if path.is_dir() and not path.name.startswith((".", "__"))
+            if path.is_dir() and not path.name.startswith((".", "_"))
         )
         contracts = {brick.name: lint_contract(brick, lint) for brick in brick_paths}
         lint_graph(brick_paths, contracts, lint)

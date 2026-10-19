@@ -1,1 +1,1 @@
-"""Runner package used for brick-qualified smoke-test discovery."""
+"""Runner package: the brick's entry point."""

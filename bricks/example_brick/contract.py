@@ -11,12 +11,20 @@ CONTRACT_VERSION = 1
 # "strict".
 LANE = "strict"
 
+# True only when the same input always gives the same output. The runtime then
+# stores a hash of each output instead of the output, because a replay can
+# compute it again. A model, a sampler or anything with hidden state is False.
+# A wrong True loses data that cannot be recovered, so False is the default.
+DETERMINISTIC = False
+
 # Map sibling brick names to "eventual" or "orchestrated".
 SIBLING_DEPENDENCIES: dict[str, str] = {}
 
 # Stable identifiers for application state owned exclusively by this brick.
-# Brick-local evidence under input/data and runner/runs is owned implicitly.
 OWNED_STATE: tuple[str, ...] = ()
+
+# This file is human-only: no agent loop may change it. Inputs and outputs must
+# be JSON values, because the runtime records them.
 
 
 class BrickInput(TypedDict):

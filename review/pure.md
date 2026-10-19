@@ -24,8 +24,8 @@ Criteria 1–8 of the strict lane, then:
 11. **Purity by relocation.** A diff that keeps `src/` pure by moving the
     effect into `runner/` — a runner that reads a file, calls a service, or
     seeds the input from the environment before calling `src/` — has hidden the
-    effect where the lane does not look. The runner records runs and owns the
-    RNG; it is not a second `input/`. Block.
+    effect where the lane does not look. The runner hands the run to the
+    runtime; it is not a second `input/`. Block.
 
 ## Severity
 
