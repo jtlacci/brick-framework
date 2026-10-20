@@ -72,6 +72,10 @@ class ChangeCheckTests(unittest.TestCase):
         self.assertIn("bricks/demo/contract.py", [p for p, _ in groups[policy.HUMAN]])
         self.assertTrue(groups[policy.CODE])
 
+    def test_non_ascii_names_are_classified(self) -> None:
+        groups = self.change("bricks/demo/src/données.py")
+        self.assertEqual([p for p, _ in groups[policy.CODE]], ["bricks/demo/src/données.py"])
+
     def test_new_brick_is_human(self) -> None:
         groups = self.change("bricks/fresh/src/logic.py")
         self.assertEqual([p for p, _ in groups[policy.HUMAN]], ["bricks/fresh/src/logic.py"])

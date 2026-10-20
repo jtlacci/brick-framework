@@ -41,12 +41,14 @@ def git(root: Path, *args: str) -> str:
 def changed_files(root: Path, base: str | None, head: str | None) -> list[str]:
     # --no-renames: a rename is a deletion and an addition, and both paths count.
     # Otherwise `git mv contract.py src/x.py` would show only the code path.
+    # -z: names exactly as stored. Without it Git C-quotes non-ASCII names
+    # ("bricks/x/src/donn\303\251es.py"), and the quoted name matches no brick.
     if base and head:
-        out = git(root, "diff", "--name-only", "--no-renames", f"{base}...{head}")
+        out = git(root, "diff", "--name-only", "-z", "--no-renames", f"{base}...{head}")
     else:
-        out = git(root, "diff", "--name-only", "--no-renames", "HEAD")
-        out += git(root, "ls-files", "--others", "--exclude-standard")
-    return sorted({line for line in out.splitlines() if line})
+        out = git(root, "diff", "--name-only", "-z", "--no-renames", "HEAD")
+        out += git(root, "ls-files", "-z", "--others", "--exclude-standard")
+    return sorted({name for name in out.split("\0") if name})
 
 
 def base_policy(root: Path, base: str, brick: str) -> dict | None:
