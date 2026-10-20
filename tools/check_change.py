@@ -7,7 +7,8 @@ so a change cannot widen its own permissions:
 - ``code``: a code-loop surface of its brick (the dev agent's files)
 - ``evaluation``: an evaluation-loop surface of its brick (the eval agent's files)
 - ``human``: everything else, including policy, data.lock, contracts, a brick
-  that does not exist on the base yet, and every file outside a brick
+  that does not exist on the base yet, a brick removed whole, and every file
+  outside a brick
 
 A change may contain code files or evaluation files, never both. Human files
 are allowed in any change and listed, because CODEOWNERS decides who approves
@@ -63,16 +64,32 @@ def base_policy(root: Path, base: str, brick: str) -> dict | None:
     return None if eval_policy.check(policy) else policy
 
 
-def classify_change(root: Path, base: str, files: list[str]) -> dict[str, list[tuple[str, str]]]:
+def brick_removed(root: Path, head: str | None, brick: str) -> bool:
+    """True when no file of the brick is left on the head (or in the working tree)."""
+    if head:
+        return not git(root, "ls-tree", "-r", "--name-only", head, "--", f"bricks/{brick}/").strip()
+    folder = root / "bricks" / brick
+    return not any(p.is_file() and "__pycache__" not in p.parts for p in folder.rglob("*")) if folder.exists() else True
+
+
+def classify_change(root: Path, base: str, files: list[str], head: str | None = None) -> dict[str, list[tuple[str, str]]]:
     """Each file with its class and the reason, grouped by class."""
     groups: dict[str, list[tuple[str, str]]] = {eval_policy.CODE: [], eval_policy.EVALUATION: [], eval_policy.HUMAN: []}
     policies: dict[str, dict | None] = {}
+    removed: dict[str, bool] = {}
     for path in files:
         parts = path.split("/")
         if len(parts) < 3 or parts[0] != "bricks" or parts[1].startswith(("_", ".")):
             groups[eval_policy.HUMAN].append((path, "outside any brick"))
             continue
         brick, inside = parts[1], "/".join(parts[2:])
+        # Removing a whole brick removes its contract too, so it is a human
+        # change: CODEOWNERS approves it, and it belongs to neither loop.
+        if brick not in removed:
+            removed[brick] = brick_removed(root, head, brick)
+        if removed[brick]:
+            groups[eval_policy.HUMAN].append((path, "the whole brick is removed"))
+            continue
         if brick not in policies:
             policies[brick] = base_policy(root, base, brick)
         policy = policies[brick]
@@ -96,7 +113,7 @@ def main() -> int:
     root = args.root.resolve()
     try:
         files = changed_files(root, args.base, args.head)
-        groups = classify_change(root, args.base or "HEAD", files)
+        groups = classify_change(root, args.base or "HEAD", files, args.head)
     except subprocess.CalledProcessError as exc:
         print(f"git failed: {exc.stderr.strip()}", file=sys.stderr)
         return EXIT_ERROR

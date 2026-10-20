@@ -80,6 +80,29 @@ class ChangeCheckTests(unittest.TestCase):
         groups = self.change("bricks/fresh/src/logic.py")
         self.assertEqual([p for p, _ in groups[policy.HUMAN]], ["bricks/fresh/src/logic.py"])
 
+    def test_a_removed_brick_is_human(self) -> None:
+        shutil.rmtree(self.root / "bricks/demo")
+        files = check_change.changed_files(self.root, None, None)
+        groups = check_change.classify_change(self.root, self.base, files)
+        self.assertEqual(groups[policy.CODE], [])
+        self.assertEqual(groups[policy.EVALUATION], [])
+        self.assertIn("bricks/demo/contract.py", [p for p, _ in groups[policy.HUMAN]])
+
+    def test_a_removed_brick_is_human_between_commits(self) -> None:
+        git(self.root, "rm", "-rq", "bricks/demo")
+        git(self.root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "remove")
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        files = check_change.changed_files(self.root, self.base, head)
+        groups = check_change.classify_change(self.root, self.base, files, head)
+        self.assertEqual((groups[policy.CODE], groups[policy.EVALUATION]), ([], []))
+
+    def test_a_brick_kept_with_one_file_is_not_removed(self) -> None:
+        # Deleting all but one file must not turn the code and evaluation files human.
+        git(self.root, "rm", "-q", "bricks/demo/src/logic.py", "bricks/demo/evaluation/evaluate.py")
+        files = check_change.changed_files(self.root, None, None)
+        groups = check_change.classify_change(self.root, self.base, files)
+        self.assertTrue(groups[policy.CODE] and groups[policy.EVALUATION])
+
 
 class PolicyTests(unittest.TestCase):
     def test_template_policy_is_valid(self) -> None:
