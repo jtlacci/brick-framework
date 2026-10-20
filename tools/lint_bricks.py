@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 import sys
@@ -47,6 +48,22 @@ DIRECT_IO = {
     "asyncio", "aiohttp", "websockets", "ctypes",
 }
 EVALUATE_FUNCTIONS = ("build", "score", "generate")
+KINDS = ("python", "web")
+# A web brick: a browser app in app/, built and evaluated in a browser by the runner.
+WEB_REQUIRED = (
+    "contract.py",
+    "app/AGENTS.md",
+    "app/package.json",
+    "app/package-lock.json",
+    "app/src",
+    "evaluation/AGENTS.md",
+    "evaluation/policy.yml",
+    "evaluation/evaluate.py",
+    "evaluation/data.lock",
+)
+WEB_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".mjs")
+WEB_NETWORK = re.compile(r"\bfetch\s*\(|XMLHttpRequest|new\s+WebSocket\b|new\s+EventSource\b|sendBeacon\s*\(")
+WEB_API_FILES = {"api.js", "api.ts"}
 GATE_OPERATORS = {">=", "<=", ">", "<"}
 FRAMEWORK_MODULES = {"_runtime"}
 
@@ -58,6 +75,7 @@ class Contract:
     owned_state: tuple[str, ...] = ()
     lane: str = "strict"
     deterministic: bool = False
+    kind: str = "python"
 
 
 class Lint:
@@ -140,6 +158,12 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     owned_state = assigned_literal(tree, "OWNED_STATE")
     lane = assigned_literal(tree, "LANE")
     deterministic = assigned_literal(tree, "DETERMINISTIC")
+    kind = assigned_literal(tree, "KIND")
+    if kind is None:
+        kind = "python"
+    elif kind not in KINDS:
+        lint.add(path, f"KIND must be one of {', '.join(KINDS)}")
+        kind = "python"
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
@@ -161,7 +185,7 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
     if not isinstance(deterministic, bool):
         lint.add(path, "DETERMINISTIC must be True or False")
         deterministic = False
-    for class_name in ("BrickInput", "BrickOutput"):
+    for class_name in ("BrickInput", "BrickOutput") if kind == "python" else ():
         declaration = classes.get(class_name)
         if not declaration or not any(annotation_name(base) == "TypedDict" for base in declaration.bases):
             lint.add(path, f"{class_name} must be declared as a TypedDict")
@@ -171,7 +195,7 @@ def lint_contract(brick: Path, lint: Lint) -> Contract:
         lint.add(path, f"LANE must be one of {', '.join(sorted(LANES))}")
         lane = "strict"
 
-    return Contract(version, dict(dependencies), tuple(owned_state), lane, deterministic)
+    return Contract(version, dict(dependencies), tuple(owned_state), lane, deterministic, kind)
 
 
 def lint_python(brick: Path, contract: Contract, lint: Lint) -> None:
@@ -309,12 +333,12 @@ def lint_adapter(path: Path, tree: ast.Module, sibling_runs: set[str], lint: Lin
         lint.add(path, "adapter makes no call through ctx['io'].external or ctx['io'].sibling", warning=True)
 
 
-def lint_evaluation(brick: Path, lint: Lint) -> dict[str, Any] | None:
+def lint_evaluation(brick: Path, lint: Lint, kind: str = "python") -> dict[str, Any] | None:
     folder = brick / "evaluation"
     tree = lint.tree(folder / "evaluate.py")
     if tree:
         defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-        for function in EVALUATE_FUNCTIONS:
+        for function in EVALUATE_FUNCTIONS + (("observe",) if kind == "web" else ()):
             if function not in defined:
                 lint.add(folder / "evaluate.py", f"must define {function}()")
         gates = assigned_literal(tree, "GATES")
@@ -439,7 +463,31 @@ LANES = {
 }
 
 
+def lint_web(brick: Path, contract: Contract, lint: Lint) -> None:
+    """A web brick: its app lives in app/, it has no Python entry point and no sibling dependencies."""
+    for relative in WEB_REQUIRED:
+        if not (brick / relative).exists():
+            lint.add(brick / relative, "required web brick path is missing")
+    lint_retired(brick, lint)
+    for folder in ("input", "runner", "src", "__init__.py"):
+        if (brick / folder).exists():
+            lint.add(brick / folder, "a web brick keeps all its code in app/")
+    if contract.dependencies:
+        lint.add(brick / "contract.py", "a web brick has no sibling dependencies: it calls the api brick over HTTP")
+    if contract.lane != "strict":
+        lint.add(brick / "contract.py", "a web brick uses the strict lane")
+    source = brick / "app/src"
+    for path in sorted(source.rglob("*")) if source.is_dir() else ():
+        if path.suffix in WEB_SUFFIXES and path.is_file() and path.name not in WEB_API_FILES:
+            if WEB_NETWORK.search(path.read_text(encoding="utf-8", errors="replace")):
+                lint.add(path, "network calls go only through app/src/api.js or app/src/api.ts")
+    lint_evaluation(brick, lint, "web")
+
+
 def lint_brick(brick: Path, contract: Contract, lint: Lint) -> None:
+    if contract.kind == "web":
+        lint_web(brick, contract, lint)
+        return
     for relative in REQUIRED:
         if not (brick / relative).exists():
             lint.add(brick / relative, "required brick path is missing")
@@ -519,6 +567,10 @@ def lint_repo(root: Path) -> Lint:
             if path.is_dir() and not path.name.startswith((".", "_"))
         )
         contracts = {brick.name: lint_contract(brick, lint) for brick in brick_paths}
+        for brick in brick_paths:
+            for name in contracts[brick.name].dependencies:
+                if name in contracts and contracts[name].kind == "web":
+                    lint.add(brick / "contract.py", f"{name} is a web brick; no brick may depend on it")
         lint_graph(brick_paths, contracts, lint)
         for brick in brick_paths:
             lint_brick(brick, contracts[brick.name], lint)

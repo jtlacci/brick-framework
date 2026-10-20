@@ -353,5 +353,61 @@ class WorkflowLaneTests(Fixture):
         self.assertError("__main__.py: only a workflow brick may have __main__.py")
 
 
+WEB_CONTRACT = (
+    'CONTRACT_VERSION = 1\nKIND = "web"\nLANE = "strict"\nDETERMINISTIC = True\n'
+    "SIBLING_DEPENDENCIES = {}\nOWNED_STATE = ()\n"
+)
+OBSERVE = "\n\ndef observe(input, browser, base_url):\n    return {}\n"
+
+
+class WebBrickTests(Fixture):
+    def web_brick(self, name: str = "web") -> Path:
+        brick = self.root / "bricks" / name
+        (brick / "app/src").mkdir(parents=True)
+        (brick / "contract.py").write_text(WEB_CONTRACT, encoding="utf-8")
+        (brick / "app/AGENTS.md").write_text("# app\n", encoding="utf-8")
+        (brick / "app/package.json").write_text('{"name": "web", "scripts": {"build": "node build.js"}}\n')
+        (brick / "app/package-lock.json").write_text('{"lockfileVersion": 3, "packages": {"": {}}}\n')
+        (brick / "app/src/main.js").write_text("import { get } from './api.js'\nget('/feed')\n")
+        (brick / "app/src/api.js").write_text("export const get = (p) => fetch('/api' + p)\n")
+        shutil.copytree(ROOT / "bricks/example_brick/evaluation", brick / "evaluation",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.policy(brick, "implementation: [src/**, input/adapters/**, input/config.yml, runner/**, __main__.py]",
+                    "implementation: [app/**]")
+        with open(brick / "evaluation/evaluate.py", "a", encoding="utf-8") as handle:
+            handle.write(OBSERVE)
+        return brick
+
+    def test_a_web_brick_lints_clean(self) -> None:
+        self.web_brick()
+        self.assertClean()
+
+    def test_a_web_brick_needs_observe(self) -> None:
+        brick = self.web_brick()
+        self.evaluate(brick, OBSERVE, "\n")
+        self.assertError("must define observe()")
+
+    def test_a_web_brick_has_no_python_folders(self) -> None:
+        brick = self.web_brick()
+        (brick / "src").mkdir()
+        self.assertError("a web brick keeps all its code in app/")
+
+    def test_network_calls_only_in_the_api_client(self) -> None:
+        brick = self.web_brick()
+        (brick / "app/src/feed.js").write_text("fetch('https://example.com/x')\n", encoding="utf-8")
+        self.assertError("network calls go only through app/src/api.js")
+
+    def test_no_brick_may_depend_on_a_web_brick(self) -> None:
+        self.web_brick()
+        other = self.brick("other")
+        self.contract(other, SIBLING_DEPENDENCIES='{"web": "eventual"}')
+        self.assertError("web is a web brick; no brick may depend on it")
+
+    def test_kind_must_be_known(self) -> None:
+        brick = self.web_brick()
+        (brick / "contract.py").write_text(WEB_CONTRACT.replace('"web"', '"desktop"'), encoding="utf-8")
+        self.assertError("KIND must be one of python, web")
+
+
 if __name__ == "__main__":
     unittest.main()
