@@ -127,6 +127,33 @@ A lane is the enforcement class a brick declares for itself with `LANE` in `cont
 
 A lane cannot exist without an enforcer: the `LANES` table in `tools/lint_bricks.py` maps each name to the function that checks it, and the linter rejects any other value.
 
+## Web bricks
+
+A brick with `KIND = "web"` in `contract.py` is a browser app. Its code is in `app/`, not in `input/`, `runner/` and `src/`:
+
+```text
+bricks/<web_brick>/
+├── contract.py           # KIND = "web", no sibling dependencies
+├── app/
+│   ├── AGENTS.md
+│   ├── package.json      # "build" script writes app/dist/
+│   ├── package-lock.json # every package from registry.npmjs.org, with integrity
+│   └── src/              # network calls only in src/api.js or src/api.ts
+└── evaluation/           # as for every brick, plus observe()
+```
+
+| Rule | Why |
+| --- | --- |
+| No brick depends on a web brick, and a web brick has no sibling dependencies | It calls the api brick over HTTP |
+| Network calls (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`) only in `app/src/api.js` or `app/src/api.ts` | One place for the evaluation to answer from recorded api responses |
+| `evaluate.py` also defines `observe(input, browser, base_url)` | The runner serves the built app at `base_url` and passes a Playwright browser; `observe` returns what it saw, and `score()` scores that |
+
+The runner prefetches the packages with no install scripts, builds the app with `npm ci --offline` and `npm run build` in its sandbox, and runs `observe` in its sandbox with no network.
+
+## Model judge
+
+Any `evaluate.py` can ask a model for a judgement. Set `JUDGE = {"model": "<model id>"}` and define `judge_requests(record, output)`, which returns a list of requests (`{"prompt": ...}` or `{"system": ..., "messages": [...]}`). The runner sends them, outside its sandbox, and calls `score(record, output, later, judgments=[...])` with the answers in the same order. Answers are cached by request, so the same evaluation gets the same judgements. Keep hard gates on checks that do not need the judge: the output under evaluation is part of the prompt.
+
 ## Framework tests
 
 The framework's own tools have tests:
