@@ -150,6 +150,10 @@ bricks/<web_brick>/
 
 The runner prefetches the packages with no install scripts, builds the app with `npm ci --offline` and `npm run build` in its sandbox, and runs `observe` in its sandbox with no network.
 
+## What a case did
+
+`score(record, output, later, calls=())` may take `calls`: the recorded exchanges the case used, in order, each `{"name", "request"}` (`sibling:<brick>` or `external:<source>`). Use it to check that a brick made the writes it must make. For a brick whose evaluation data records every call, set `max_out_of_evidence: 0` in its policy, so an unexpected call fails the trial.
+
 ## Model judge
 
 Any `evaluate.py` can ask a model for a judgement. Set `JUDGE = {"model": "<model id>"}` and define `judge_requests(record, output)`, which returns a list of requests (`{"prompt": ...}` or `{"system": ..., "messages": [...]}`). The runner sends them, outside its sandbox, and calls `score(record, output, later, judgments=[...])` with the answers in the same order. Answers are cached by request, so the same evaluation gets the same judgements. Keep hard gates on checks that do not need the judge: the output under evaluation is part of the prompt.
