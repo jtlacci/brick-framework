@@ -1,0 +1,52 @@
+# The deterministic checks, for repositories built on this framework. Like
+# review.yml, this is a reusable workflow: it runs only when another
+# repository calls it. The caller adds:
+#
+#   # .github/workflows/checks.yml
+#   on: pull_request
+#   jobs:
+#     checks:
+#       uses: jtlacci/brick-framework/.github/workflows/checks.yml@main
+#
+# Two checks, both standard-library Python:
+#   - the brick linter
+#   - the change check: one change belongs to one loop (code or evaluation),
+#     classified by the evaluation policy on the base commit
+name: checks
+
+on:
+  workflow_call:
+    inputs:
+      framework-ref:
+        description: the framework revision to check with
+        type: string
+        default: main
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jtlacci/brick-framework
+          ref: ${{ inputs.framework-ref }}
+          path: .brick-framework
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: lint
+        run: python3 .brick-framework/tools/lint_bricks.py --root .
+
+      - name: change check
+        run: >
+          python3 .brick-framework/tools/check_change.py --root .
+          --base ${{ github.event.pull_request.base.sha }}
+          --head ${{ github.event.pull_request.head.sha }}

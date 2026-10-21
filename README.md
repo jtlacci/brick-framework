@@ -5,21 +5,23 @@ This repository organizes one codebase as discrete domain bricks. Bricks are use
 Define every domain as a named folder under `bricks/`. `example_brick` is an empty placeholder showing the required files and contracts.
 
 ```text
-bricks/<brick_name>/
-├── __init__.py           # exposes only the internal run entry point
-├── contract.py           # typed boundary, dependencies, state ownership
-├── AGENTS.md             # optional domain-specific additions
-├── input/                # config, adapters, saved examples, input contract
-├── runner/               # run entry point, IDs, history, optional flow smoke tests
-└── src/                  # private logic and optional focused tests
+bricks/
+├── _runtime.py           # framework runtime: runs, io routing, capture
+├── _yaml.py              # the YAML subset for config and policy
+└── <brick_name>/
+    ├── __init__.py       # exposes only the internal run entry point
+    ├── contract.py       # typed boundary, determinism, dependencies, state ownership
+    ├── AGENTS.md         # optional domain-specific additions
+    ├── input/            # config and adapters
+    ├── runner/           # the run entry point
+    ├── src/              # private logic
+    └── evaluation/       # how the brick is evaluated: policy, evaluate.py, data.lock
 ```
 
-- Rules inherit from the closest `AGENTS.md`; not every folder needs one. The `input/`, `runner/`, and `src/` folders have contracts because each owns a different boundary.
+- Rules inherit from the closest `AGENTS.md`; not every folder needs one. The `input/`, `runner/`, `src/` and `evaluation/` folders have contracts because each owns a different boundary.
 - Add one file under `input/adapters/` for every external source and sibling brick.
-- `src/` reaches external sources and sibling bricks only through its own `input/` adapters.
+- `src/` reaches external sources and sibling bricks only through its own `input/` adapters, and adapters make every call through the run context's io.
 - Expose only `run` to sibling bricks through the brick's top-level `__init__.py`.
-- Keep named adapter examples under `input/data/<adapter>/<case>.json` and recent runs under `runner/runs/`.
-- Sibling calls are fully brick-contained: they create their own run IDs and always use their own default saved mode.
 - Declare every sibling dependency and its `eventual` or `orchestrated` consistency policy in `contract.py`. The declared graph must be acyclic.
 - Declare stable identifiers for application state owned by the brick. One state resource has one owner.
 
@@ -28,6 +30,7 @@ bricks/<brick_name>/
 ```python
 CONTRACT_VERSION = 1
 LANE = "strict"
+DETERMINISTIC = False
 SIBLING_DEPENDENCIES = {"another_brick": "eventual"}
 OWNED_STATE = ("database:example-records",)
 
@@ -35,11 +38,82 @@ class BrickInput(TypedDict): ...
 class BrickOutput(TypedDict): ...
 ```
 
-Smoke tests are not required per brick. Keep them only under `runner/tests/` of a `workflow` brick, with at most three files. They prove integration through `run`. Put focused domain tests under `src/tests/` only when the private logic warrants them.
+Inputs, outputs, requests and responses must be JSON values, because the runtime records them.
 
 Sibling adapters still import only the sibling's top-level `run`; `contract.py` is not another exported API. The `run` annotations expose the boundary to static tooling, while each adapter translates into its owning brick's types.
 
 Split a brick when `run` becomes a large dispatcher, its adapters stop being easy to understand, or unrelated changes repeatedly touch the same `src/`.
+
+## Runs and io
+
+The public Python entry point has one shape:
+
+```python
+run(inputs: BrickInput) -> BrickOutput
+```
+
+There are no mode options. `run` calls `_runtime.run_brick`, which builds the run context and records the run. Adapters make every call through the context's io:
+
+```python
+ctx["io"].external("prices", request, _fetch_live)   # an external source
+ctx["io"].sibling("market_data", request, run)       # a sibling's run, passed, not called
+```
+
+| Where | io | What happens |
+| --- | --- | --- |
+| Production | `LiveIO` | The call is made. With `BRICK_CAPTURE_DIR` set, it is appended to a local spool file. |
+| Evaluation | The runner's replay io | Recorded responses are injected below the adapter's translation. |
+
+What the runtime captures:
+
+| Data | Stored |
+| --- | --- |
+| External exchanges (app-boundary data) | Full request and response |
+| Sibling exchanges and brick runs | Full output if the brick has `DETERMINISTIC = False`, else a hash, because a replay can compute it again |
+
+## Evaluation
+
+Each brick has an `evaluation/` folder. The evaluation runner, a separate trusted service, uses it to evaluate the brick. Agents hand work to the runner; no agent runs evaluations itself.
+
+| File | Owner | Purpose |
+| --- | --- | --- |
+| `policy.yml` | Human only | Surfaces for each loop, split rule, selection, seeds, label horizon |
+| `evaluate.py` | Evaluation loop | `GATES`, `build()`, `score()`, `generate()` |
+| `data.lock` | Human only | The pinned dataset hash, or `unpinned` for a new brick |
+
+Two agent loops change a brick. One change belongs to one loop:
+
+| | Code loop | Evaluation loop |
+| --- | --- | --- |
+| Agent | Dev agent | Eval agent |
+| Can change | `code_loop` surfaces in `policy.yml` | `eval_loop` surfaces in `policy.yml` |
+| Frozen | All of `evaluation/` | The production implementation |
+
+There are no unit tests or smoke tests. Domain rules are properties in `evaluation/`, where the dev agent cannot change them.
+
+## Checks
+
+Check brick shape, import direction, public exports, io routing and evaluation policy with:
+
+```sh
+python3 tools/lint_bricks.py
+```
+
+Check that a change belongs to one loop, classified by the policy on the base commit:
+
+```sh
+python3 tools/check_change.py --base <sha> --head <sha>
+```
+
+Both run in CI through the reusable workflow `.github/workflows/checks.yml`. Copy `.github/CODEOWNERS.example` to `.github/CODEOWNERS` so human-only files need human approval.
+
+Render the declared sibling-dependency graph as Mermaid with:
+
+```sh
+python3 tools/graph_bricks.py
+```
+
+Each node lists the state its brick owns. A solid arrow is an `orchestrated` dependency and a dashed arrow is an `eventual` one. Bricks that no sibling depends on are drawn with a thicker border; those are the top-level flows.
 
 ## Lanes
 
@@ -48,49 +122,46 @@ A lane is the enforcement class a brick declares for itself with `LANE` in `cont
 | Lane | What it means | What the linter adds |
 | --- | --- | --- |
 | `strict` | The regular brick. | Nothing beyond the rules every brick gets. |
-| `pure` | Output is a function of input alone. | No adapters and no sibling dependencies. The direct-I/O ban that `src/` already carries widens to the whole brick, plus `random` and `time`, plus any `.now()`, `.today()`, or `.utcnow()` call. `runner/` is exempt because it records runs and owns `rng.py`; `datetime` stays importable for annotations and arithmetic. |
-| `workflow` | Invoked as a whole operation, never imported for its parts. | No contract may name it as a sibling dependency. It alone may carry a process door, `__main__.py`, and that door may import nothing from the brick tree except the brick's own `run`. Smoke tests belong only here. |
+| `pure` | Output is a function of input alone. | No adapters and no sibling dependencies. The direct-I/O ban that `src/` already carries widens to the whole brick, plus `random` and `time`, plus any `.now()`, `.today()`, or `.utcnow()` call. `runner/` and `evaluation/` are exempt; `datetime` stays importable for annotations and arithmetic. |
+| `workflow` | Invoked as a whole operation, never imported for its parts. | No contract may name it as a sibling dependency. It alone may carry a process door, `__main__.py`, and that door may import nothing from the brick tree except the brick's own `run`, and no direct-I/O module. |
 
 A lane cannot exist without an enforcer: the `LANES` table in `tools/lint_bricks.py` maps each name to the function that checks it, and the linter rejects any other value.
 
-## Saved, fresh, and save
+## Web bricks
 
-The public Python entry point has the shape:
+A brick with `KIND = "web"` in `contract.py` is a browser app. Its code is in `app/`, not in `input/`, `runner/` and `src/`:
 
-```python
-run(inputs, *, fresh=False, save=False)
+```text
+bricks/<web_brick>/
+├── contract.py           # KIND = "web", no sibling dependencies
+├── app/
+│   ├── AGENTS.md
+│   ├── package.json      # "build" script writes app/dist/
+│   ├── package-lock.json # every package from registry.npmjs.org, with integrity
+│   └── src/              # network calls only in src/api.js or src/api.ts
+└── evaluation/           # as for every brick, plus observe()
 ```
 
-| Option | Adapter behavior | Tracked example data |
-| --- | --- | --- |
-| default | Replay the named saved example | Read only |
-| `fresh=True` | Call the real source | Unchanged |
-| `save=True` | Call the real source, redact and validate it | Atomically replace the named example |
+| Rule | Why |
+| --- | --- |
+| No brick depends on a web brick, and a web brick has no sibling dependencies | It calls the api brick over HTTP |
+| Network calls (`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`) only in `app/src/api.js` or `app/src/api.ts` | One place for the evaluation to answer from recorded api responses |
+| `evaluate.py` also defines `observe(input, browser, base_url)` | The runner serves the built app at `base_url` and passes a Playwright browser; `observe` returns what it saw, and `score()` scores that |
 
-`save=True` implies a fresh call. A missing or mismatched saved example is an error, never an implicit live call. Neither option propagates when a sibling adapter calls another brick.
+The runner prefetches the packages with no install scripts, builds the app with `npm ci --offline` and `npm run build` in its sandbox, and runs `observe` in its sandbox with no network.
 
-Examples use stable paths and canonical JSON, so normal runs do not churn Git. An explicit save is the review point that may create a diff. Each saved example includes the capture run ID; run records and evidence can be correlated later without involving the runner in adapter persistence.
+## What a case did
 
-`bricks/__init__.py` enables repository-wide standard-library test discovery. Each brick's top-level file defines its repository-internal entry point. Keep `runner/__init__.py`; add `runner/tests/__init__.py` only when that workflow has smoke tests. `input/`, `adapters/`, and `src/` do not need package-marker files.
+`score(record, output, later, calls=())` may take `calls`: the recorded exchanges the case used, in order, each `{"name", "request"}` (`sibling:<brick>` or `external:<source>`). Use it to check that a brick made the writes it must make. For a brick whose evaluation data records every call, set `max_out_of_evidence: 0` in its policy, so an unexpected call fails the trial.
 
-Once at least one workflow has a smoke test, run all smoke tests with:
+## Model judge
+
+Any `evaluate.py` can ask a model for a judgement. Set `JUDGE = {"model": "<model id>"}` and define `judge_requests(record, output)`, which returns a list of requests (`{"prompt": ...}` or `{"system": ..., "messages": [...]}`). The runner sends them, outside its sandbox, and calls `score(record, output, later, judgments=[...])` with the answers in the same order. Answers are cached by request, so the same evaluation gets the same judgements. Keep hard gates on checks that do not need the judge: the output under evaluation is part of the prompt.
+
+## Framework tests
+
+The framework's own tools have tests:
 
 ```sh
-python3 -m unittest discover -s bricks -t . -v
+python3 -m unittest discover -s tools/tests -t . -v
 ```
-
-Python's test runner exits with status 5 when no tests exist, which is the expected state of this empty boilerplate.
-
-Check brick shape, import direction, public exports, and evidence limits with:
-
-```sh
-python3 tools/lint_bricks.py
-```
-
-Render the declared sibling-dependency graph as Mermaid with:
-
-```sh
-python3 tools/graph_bricks.py
-```
-
-Each node lists the state its brick owns. A solid arrow is an `orchestrated` dependency and a dashed arrow is an `eventual` one. Bricks that no sibling depends on are drawn with a thicker border; those are the top-level flows that may carry smoke tests.

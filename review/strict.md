@@ -11,12 +11,13 @@ checked its mechanical half. You judge the meaning.
    ignored. Advisory, unless the dispatch hides a second sibling dependency the
    contract does not declare, which blocks.
 
-2. **Mode discipline in adapters.** Each adapter owns saved, fresh and save
-   behaviour. On the default path it replays the named example and a missing or
-   mismatched example is an error, never an implicit live call. `save` implies
-   fresh, redacts, validates, and replaces atomically. A diff on which the
-   default path can reach a real source, or on which a sibling call forwards
-   `fresh` or `save`, blocks.
+2. **All io goes through the run context.** Every external call is
+   `ctx["io"].external(...)` and every sibling call is `ctx["io"].sibling(...)`
+   with the sibling's `run` passed, not called. That is what lets production
+   record the call and evaluation replay it. A diff that reaches a source any
+   other way — a client stored at module level, a call made before or after the
+   io call, a branch on an environment variable or a "mode" — makes the brick
+   behave differently in evaluation than in production, and blocks.
 
 3. **Translation at the boundary.** A sibling adapter imports the sibling's
    `run` and translates its output into this brick's own types. A diff that
@@ -36,23 +37,26 @@ checked its mechanical half. You judge the meaning.
    writes, deletes or migrates a resource the contract does not own — through an
    adapter or otherwise — blocks.
 
-6. **Evidence is safe to commit.** Saved examples and run records are tracked
-   in Git. A diff whose example carries a credential, a cookie, a personal
-   record, or an unbounded payload blocks; the linter's redaction list is a
-   floor, not the definition of sensitive.
+6. **Captured data is safe to keep.** The runtime records every brick input,
+   output, request and response. A diff that puts a credential, a token, a
+   cookie or a personal record into one of them — a header in a request, a key
+   in an input — blocks. Authentication belongs inside the adapter's live call,
+   after the io records the request.
 
 7. **Simplicity and duplication.** Is there a materially simpler construction
    with the same behaviour? Does this reimplement something the brick, or a
    sibling's `run`, already provides? Name it concretely; "could be cleaner" is
    not a finding. Advisory.
 
-8. **Tests that earn their keep.** A focused `src/` test that restates the
-   implementation, asserts on a private helper's shape, or cannot fail reads as
-   coverage without being any. Advisory.
+8. **Determinism is declared truthfully.** `DETERMINISTIC = True` tells the
+   runtime to keep only a hash of each output, because a replay can compute it
+   again. A diff that sets it on a brick that samples, calls a model, reads a
+   clock or keeps state across calls loses data that cannot be recovered.
+   Blocks.
 
 ## Severity
 
-Criteria **2, 4, 5 and 6 block**, and criterion 3 blocks when the foreign type
-reaches `src/`. Criteria 1, 7 and 8 are advisory — except where such a finding
+Criteria **2, 4, 5, 6 and 8 block**, and criterion 3 blocks when the foreign
+type reaches `src/`. Criteria 1 and 7 are advisory — except where such a finding
 names a concrete path by which the boundary stops holding, which is one of the
 blocking criteria wearing another label.
