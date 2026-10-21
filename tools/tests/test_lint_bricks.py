@@ -411,3 +411,14 @@ class WebBrickTests(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BudgetTests(unittest.TestCase):
+    def test_a_budget_has_known_positive_limits(self) -> None:
+        from tools import policy
+        text = (Path(__file__).resolve().parents[2] / "bricks/example_brick/evaluation/policy.yml").read_text()
+        good = policy.load(text)
+        self.assertEqual(policy.check(good), [])
+        for bad in ({"max_cases": 0}, {"max_cases": True}, {"max_runs": 3}, "500"):
+            value = dict(good, budget=bad)
+            self.assertTrue(policy.check(value), bad)

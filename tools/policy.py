@@ -102,10 +102,23 @@ def check(policy: Any) -> list[str]:
     if not isinstance(cap, (int, float)) or isinstance(cap, bool) or not 0 <= cap < 1:
         errors.append("max_out_of_evidence must be a share from 0 up to (not including) 1")
 
+    budget = policy.get("budget", {})
+    if not isinstance(budget, dict):
+        errors.append("budget must be a mapping of limits")
+    else:
+        for key, value in budget.items():
+            if key not in BUDGET_KEYS:
+                errors.append(f"budget.{key} is not a known limit ({', '.join(BUDGET_KEYS)})")
+            elif not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                errors.append(f"budget.{key} must be a positive integer")
+
     horizon = policy.get("label_horizon_seconds", 0)
     if not isinstance(horizon, (int, float)) or isinstance(horizon, bool) or horizon < 0:
         errors.append("label_horizon_seconds must be a number of seconds, 0 or more")
     return errors
+
+
+BUDGET_KEYS = ("max_cases", "max_seconds", "max_agent_calls", "max_agent_tokens")
 
 
 def _share(value: Any) -> bool:
