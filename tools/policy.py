@@ -112,13 +112,17 @@ def check(policy: Any) -> list[str]:
             elif not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 errors.append(f"budget.{key} must be a positive integer")
 
+    live = policy.get("live_externals", [])
+    if not isinstance(live, list) or not all(isinstance(n, str) and n for n in live):
+        errors.append("live_externals must be a list of external names (the runner answers them live)")
+
     horizon = policy.get("label_horizon_seconds", 0)
     if not isinstance(horizon, (int, float)) or isinstance(horizon, bool) or horizon < 0:
         errors.append("label_horizon_seconds must be a number of seconds, 0 or more")
     return errors
 
 
-BUDGET_KEYS = ("max_cases", "max_seconds", "max_agent_calls", "max_agent_tokens")
+BUDGET_KEYS = ("max_cases", "max_seconds", "max_agent_calls", "max_agent_tokens", "max_model_calls", "max_model_tokens")
 
 
 def _share(value: Any) -> bool:

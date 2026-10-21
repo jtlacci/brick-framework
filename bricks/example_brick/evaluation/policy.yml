@@ -44,7 +44,14 @@ max_out_of_evidence: 0.05
 #   max_seconds:      time of one run (build, run, score)
 #   max_agent_calls:  computer use model calls in one run
 #   max_agent_tokens: computer use model tokens in one run
+#   max_model_calls:  live model calls in one run (see live_externals)
+#   max_model_tokens: live model tokens in one run
 # Leave a limit out for no limit beyond the runner's own.
 budget:
   max_cases: 500
   max_seconds: 900
+
+# Externals the evaluation runner may answer live when a case has no recorded
+# answer, for a brick whose requests change with its code (a model prompt).
+# The runner caches each answer by request. Leave it out: no live calls.
+# live_externals: [anthropic]

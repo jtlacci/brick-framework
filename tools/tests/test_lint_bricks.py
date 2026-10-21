@@ -422,3 +422,5 @@ class BudgetTests(unittest.TestCase):
         for bad in ({"max_cases": 0}, {"max_cases": True}, {"max_runs": 3}, "500"):
             value = dict(good, budget=bad)
             self.assertTrue(policy.check(value), bad)
+        self.assertEqual(policy.check(dict(good, budget={"max_model_calls": 10}, live_externals=["anthropic"])), [])
+        self.assertTrue(policy.check(dict(good, live_externals="anthropic")))
